@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Scraper</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #09090b; color: #e4e4e7; min-height: 100vh; }
+  .container { max-width: 960px; margin: 0 auto; padding: 1.5rem 1rem; }
+  h1 { font-size: 1.6rem; font-weight: 700; background: linear-gradient(135deg, #61dafb, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+  .stats { display: flex; gap: 1rem; font-size: 0.8rem; color: #71717a; flex-wrap: wrap; }
+  .stats span { color: #61dafb; font-weight: 600; }
+
+  /* Config panel */
+  .config-panel { background: #111113; border: 1px solid #27272a; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+  .config-section { margin-bottom: 0.75rem; }
+  .config-section:last-child { margin-bottom: 0; }
+  .config-label { font-size: 0.7rem; font-weight: 600; color: #52525b; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; }
+  .chip-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .chip {
+    padding: 0.3rem 0.65rem; border-radius: 6px; font-size: 0.72rem; font-weight: 600;
+    border: 1px solid #27272a; background: #18181b; color: #71717a;
+    cursor: pointer; transition: all 0.15s; user-select: none;
+  }
+  .chip:hover { border-color: #3f3f46; color: #a1a1aa; }
+  .chip.selected { border-color: var(--chip-color, #61dafb); color: var(--chip-color, #61dafb); background: color-mix(in srgb, var(--chip-color, #61dafb) 12%, #18181b); }
+  .chip-engine.selected { border-color: #a78bfa; color: #a78bfa; background: color-mix(in srgb, #a78bfa 12%, #18181b); }
+  .config-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+
+  .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; align-items: center; }
+  input[type="text"] {
+    flex: 1; min-width: 180px; padding: 0.5rem 0.75rem;
+    background: #18181b; border: 1px solid #27272a; border-radius: 6px;
+    color: #e4e4e7; font-size: 0.85rem; outline: none;
+  }
+  input[type="text"]:focus { border-color: #61dafb; }
+  .btn {
+    padding: 0.5rem 0.9rem; border: 1px solid #27272a; border-radius: 6px;
+    background: #18181b; color: #a1a1aa; font-size: 0.8rem; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .btn:hover { border-color: #61dafb; color: #e4e4e7; }
+  .btn.active { background: #61dafb; color: #09090b; border-color: #61dafb; font-weight: 600; }
+  .btn-scrape { background: #164e63; color: #61dafb; border-color: #155e75; font-size: 0.85rem; padding: 0.55rem 1.2rem; }
+  .btn-scrape:hover { background: #155e75; }
+  .btn-scrape:disabled { opacity: 0.5; cursor: not-allowed; }
+  select {
+    padding: 0.5rem 0.6rem; background: #18181b; border: 1px solid #27272a;
+    border-radius: 6px; color: #a1a1aa; font-size: 0.8rem; outline: none; cursor: pointer;
+  }
+  .card {
+    background: #18181b; border: 1px solid #27272a; border-radius: 8px;
+    padding: 1rem; margin-bottom: 0.75rem; display: flex; gap: 0.85rem; transition: border-color 0.15s;
+  }
+  .card:hover { border-color: #3f3f46; }
+  .score-circle {
+    width: 40px; height: 40px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-weight: 700; font-size: 0.75rem; flex-shrink: 0;
+  }
+  .score-green { background: #14532d; color: #4ade80; }
+  .score-yellow { background: #422006; color: #facc15; }
+  .score-gray { background: #27272a; color: #71717a; }
+  .card-body { flex: 1; min-width: 0; }
+  .card-top { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+  .tag { padding: 0.1rem 0.45rem; border-radius: 3px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+  .tag-job { background: #14532d; color: #4ade80; }
+  .tag-post { background: #2e1065; color: #a78bfa; }
+  .card-title { font-size: 0.9rem; font-weight: 600; color: #e4e4e7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-meta { font-size: 0.78rem; color: #71717a; margin-bottom: 0.3rem; }
+  .card-snippet { font-size: 0.78rem; color: #52525b; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card-link { display: inline-block; margin-top: 0.4rem; font-size: 0.75rem; color: #61dafb; text-decoration: none; }
+  .card-link:hover { text-decoration: underline; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #27272a; border-top-color: #61dafb; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-left: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { text-align: center; color: #52525b; padding: 3rem 1rem; font-size: 0.9rem; }
+
+  /* Progress */
+  .progress-panel { background: #111113; border: 1px solid #27272a; border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem; overflow: hidden; }
+  .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .progress-title { font-size: 0.9rem; font-weight: 600; color: #e4e4e7; display: flex; align-items: center; gap: 0.5rem; }
+  .progress-elapsed { font-size: 0.75rem; color: #52525b; font-variant-numeric: tabular-nums; }
+  .progress-bar-track { width: 100%; height: 6px; background: #1e1e22; border-radius: 3px; margin-bottom: 0.75rem; overflow: hidden; }
+  .progress-bar-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, #61dafb, #a78bfa); transition: width 0.4s ease; }
+  .progress-detail { display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #71717a; margin-bottom: 0.5rem; }
+  .progress-found { display: inline-block; background: #1a1a2e; color: #61dafb; padding: 0.1rem 0.45rem; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+  .progress-log { background: #0a0a0c; border: 1px solid #1e1e22; border-radius: 6px; padding: 0.5rem 0.65rem; max-height: 120px; overflow-y: auto; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.68rem; line-height: 1.55; color: #52525b; }
+  .progress-log div:last-child { color: #a1a1aa; }
+
+  @media (max-width: 600px) {
+    .header { flex-direction: column; align-items: flex-start; }
+    .toolbar { flex-direction: column; }
+    input[type="text"] { width: 100%; }
+    .card-title { white-space: normal; }
+    .config-actions { flex-direction: column; width: 100%; }
+    .btn-scrape { width: 100%; text-align: center; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef } = React;
+
+function formatTime(secs) {
+  if (!secs) return '0s';
+  const m = Math.floor(secs / 60);
+  const s = Math.round(secs % 60);
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function ProgressPanel({ progress }) {
+  const logRef = useRef(null);
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [progress?.log]);
+  if (!progress) return null;
+  const { phase, phase_num, total_phases, query, query_num, total_queries, found_so_far, step, elapsed_seconds, log } = progress;
+  const totalSteps = total_phases || 5;
+  const pct = step === 'Filtering' || step === 'Ranking' ? 90 : step === 'Done' ? 100
+    : totalSteps > 0 ? Math.min(85, ((phase_num - 1) / totalSteps * 80) + (total_queries > 0 ? (query_num / total_queries) * (80 / totalSteps) : 0)) : 0;
+
+  return (
+    <div className="progress-panel">
+      <div className="progress-header">
+        <div className="progress-title">
+          <span className="spinner"></span>
+          {step === 'Filtering' ? 'Filtering results...' : step === 'Ranking' ? 'Ranking & saving...' : step === 'Done' ? 'Complete!' : `Scraping: ${phase || 'Starting...'}`}
+        </div>
+        <div className="progress-elapsed">{formatTime(elapsed_seconds)}</div>
+      </div>
+      <div className="progress-bar-track"><div className="progress-bar-fill" style={{width: `${pct}%`}}></div></div>
+      <div className="progress-detail">
+        <div>
+          {step === 'Scraping' && query ? (<>Query <span style={{color:'#a1a1aa'}}>{query_num}/{total_queries}</span>: {query}</>) :
+           step === 'Filtering' ? (<>Running filters on {found_so_far} results</>) :
+           step === 'Done' ? (<>Finished with {found_so_far} results</>) : (<>Initializing...</>)}
+        </div>
+        <div className="progress-found">{found_so_far || 0} found</div>
+      </div>
+      {log && log.length > 0 && <div className="progress-log" ref={logRef}>{log.map((line, i) => <div key={i}>{line}</div>)}</div>}
+    </div>
+  );
+}
+
+function App() {
+  const [results, setResults] = useState([]);
+  const [status, setStatus] = useState({});
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [sort, setSort] = useState('relevance');
+  const [timeRange, setTimeRange] = useState('1w');
+  const [scraping, setScraping] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const pollRef = useRef(null);
+
+  // Tech and engine selection
+  const [techOptions, setTechOptions] = useState([]);
+  const [engineOptions, setEngineOptions] = useState([]);
+  const [selectedTechs, setSelectedTechs] = useState(['react_native']);
+  const [selectedEngines, setSelectedEngines] = useState(['linkedin', 'duckduckgo', 'bing', 'google']);
+
+  useEffect(() => {
+    fetch('/api/techs').then(r => r.json()).then(setTechOptions).catch(() => {});
+    fetch('/api/engines').then(r => r.json()).then(setEngineOptions).catch(() => {});
+  }, []);
+
+  const toggleTech = (id) => {
+    setSelectedTechs(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
+  };
+  const toggleEngine = (id) => {
+    setSelectedEngines(prev => prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]);
+  };
+
+  const fetchResults = () => {
+    fetch('/api/results').then(r => r.json()).then(d => { setResults(d.results || []); setLoading(false); }).catch(() => setLoading(false));
+  };
+  const fetchStatus = () => {
+    fetch('/api/status').then(r => r.json()).then(s => {
+      setStatus(s);
+      if (s.is_running && !scraping) setScraping(true);
+      if (!s.is_running && scraping) { setScraping(false); fetchResults(); if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } }
+    }).catch(() => {});
+  };
+
+  useEffect(() => { fetchResults(); fetchStatus(); const id = setInterval(fetchStatus, 30000); return () => clearInterval(id); }, []);
+  useEffect(() => {
+    if (scraping) { pollRef.current = setInterval(fetchStatus, 1500); return () => { clearInterval(pollRef.current); pollRef.current = null; }; }
+  }, [scraping]);
+
+  const runScrape = () => {
+    if (selectedTechs.length === 0) return;
+    setScraping(true);
+    const params = new URLSearchParams({ time_range: timeRange, techs: selectedTechs.join(','), engines: selectedEngines.join(',') });
+    fetch(`/api/scrape?${params}`, { method: 'POST' }).then(r => r.json()).catch(() => setScraping(false));
+  };
+
+  const filtered = useMemo(() => {
+    let items = results;
+    if (filter === 'jobs') items = items.filter(r => r.result_type === 'job');
+    if (filter === 'posts') items = items.filter(r => r.result_type === 'post');
+    if (search) {
+      const q = search.toLowerCase();
+      items = items.filter(r => r.title.toLowerCase().includes(q) || r.company_or_author.toLowerCase().includes(q) || r.location.toLowerCase().includes(q) || r.snippet.toLowerCase().includes(q));
+    }
+    if (sort === 'newest') items = [...items].sort((a, b) => (b.scraped_at || '').localeCompare(a.scraped_at || ''));
+    else items = [...items].sort((a, b) => b.relevance_score - a.relevance_score);
+    return items;
+  }, [results, filter, search, sort]);
+
+  const jobCount = results.filter(r => r.result_type === 'job').length;
+  const postCount = results.filter(r => r.result_type === 'post').length;
+  const scoreClass = (s) => s > 70 ? 'score-green' : s > 40 ? 'score-yellow' : 'score-gray';
+  const isRunning = scraping || status.is_running;
+
+  return (
+    <div className="container">
+      <div className="header">
+        <div>
+          <h1>LinkedIn Job Scraper</h1>
+          <div className="stats">
+            <div>Total: <span>{results.length}</span></div>
+            <div>Jobs: <span>{jobCount}</span></div>
+            <div>Posts: <span>{postCount}</span></div>
+            {status.last_scrape_time && <div>Last scrape: {new Date(status.last_scrape_time).toLocaleString()}</div>}
+          </div>
+        </div>
+      </div>
+
+      <div className="config-panel">
+        <div className="config-section">
+          <div className="config-label">Technologies</div>
+          <div className="chip-row">
+            {techOptions.map(t => (
+              <span key={t.id}
+                className={`chip ${selectedTechs.includes(t.id) ? 'selected' : ''}`}
+                style={selectedTechs.includes(t.id) ? {'--chip-color': t.color} : {}}
+                onClick={() => !isRunning && toggleTech(t.id)}>
+                {t.label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="config-section">
+          <div className="config-label">Search Engines</div>
+          <div className="chip-row">
+            {engineOptions.map(e => (
+              <span key={e.id}
+                className={`chip chip-engine ${selectedEngines.includes(e.id) ? 'selected' : ''}`}
+                onClick={() => !isRunning && toggleEngine(e.id)}>
+                {e.label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="config-section">
+          <div className="config-actions">
+            <select value={timeRange} onChange={e => setTimeRange(e.target.value)} disabled={isRunning}>
+              <option value="24h">Last 24 hours</option>
+              <option value="3d">Last 3 days</option>
+              <option value="1w">Last week</option>
+              <option value="2w">Last 2 weeks</option>
+              <option value="1m">Last month</option>
+              <option value="3m">Last 3 months</option>
+            </select>
+            <button className="btn btn-scrape" onClick={runScrape} disabled={isRunning || selectedTechs.length === 0}>
+              {isRunning ? 'Scraping...' : selectedTechs.length === 0 ? 'Select a tech' : `Scrape ${selectedTechs.length} tech${selectedTechs.length > 1 ? 's' : ''}`}
+              {isRunning && <span className="spinner"></span>}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {isRunning && status.progress && <ProgressPanel progress={status.progress} />}
+
+      <div className="toolbar">
+        <input type="text" placeholder="Search titles, companies, locations..." value={search} onChange={e => setSearch(e.target.value)} />
+        {['all','jobs','posts'].map(f => (
+          <button key={f} className={`btn ${filter === f ? 'active' : ''}`} onClick={() => setFilter(f)}>
+            {f === 'all' ? 'All' : f === 'jobs' ? 'Jobs' : 'Posts'}
+          </button>
+        ))}
+        <select value={sort} onChange={e => setSort(e.target.value)}>
+          <option value="relevance">Relevance</option>
+          <option value="newest">Newest</option>
+        </select>
+      </div>
+
+      {loading && !isRunning ? (
+        <div className="empty">Loading results...<span className="spinner"></span></div>
+      ) : !isRunning && filtered.length === 0 ? (
+        <div className="empty">No results found. Select technologies and run a scrape.</div>
+      ) : (
+        filtered.map((r, i) => (
+          <div className="card" key={r.url + i}>
+            <div className={`score-circle ${scoreClass(r.relevance_score)}`}>{Math.round(r.relevance_score)}</div>
+            <div className="card-body">
+              <div className="card-top">
+                <span className={`tag ${r.result_type === 'job' ? 'tag-job' : 'tag-post'}`}>{r.result_type === 'job' ? 'JOB' : 'POST'}</span>
+                <span className="card-title">{r.title}</span>
+              </div>
+              <div className="card-meta">{r.company_or_author}{r.location && r.location !== 'Not specified' ? ` \u2022 ${r.location}` : ''}</div>
+              <div className="card-snippet">{r.snippet}</div>
+              <a className="card-link" href={r.url} target="_blank" rel="noopener noreferrer">View on LinkedIn &rarr;</a>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
