@@ -160,7 +160,9 @@ function App() {
   const [techOptions, setTechOptions] = useState([]);
   const [engineOptions, setEngineOptions] = useState([]);
   const [selectedTechs, setSelectedTechs] = useState(['react_native']);
-  const [selectedEngines, setSelectedEngines] = useState(['linkedin', 'duckduckgo', 'bing', 'google']);
+  const [selectedEngines, setSelectedEngines] = useState(['linkedin', 'yahoo']);
+  const [contractOnly, setContractOnly] = useState(false);
+  const [noSponsorship, setNoSponsorship] = useState(true);
 
   useEffect(() => {
     fetch('/api/techs').then(r => r.json()).then(setTechOptions).catch(() => {});
@@ -193,7 +195,7 @@ function App() {
   const runScrape = () => {
     if (selectedTechs.length === 0) return;
     setScraping(true);
-    const params = new URLSearchParams({ time_range: timeRange, techs: selectedTechs.join(','), engines: selectedEngines.join(',') });
+    const params = new URLSearchParams({ time_range: timeRange, techs: selectedTechs.join(','), engines: selectedEngines.join(','), contract_only: contractOnly, allow_sponsorship: !noSponsorship });
     fetch(`/api/scrape?${params}`, { method: 'POST' }).then(r => r.json()).catch(() => setScraping(false));
   };
 
@@ -205,7 +207,7 @@ function App() {
       const q = search.toLowerCase();
       items = items.filter(r => r.title.toLowerCase().includes(q) || r.company_or_author.toLowerCase().includes(q) || r.location.toLowerCase().includes(q) || r.snippet.toLowerCase().includes(q));
     }
-    if (sort === 'newest') items = [...items].sort((a, b) => (b.scraped_at || '').localeCompare(a.scraped_at || ''));
+    if (sort === 'newest') items = [...items].sort((a, b) => (b.posted_at || b.scraped_at || '').localeCompare(a.posted_at || a.scraped_at || ''));
     else items = [...items].sort((a, b) => b.relevance_score - a.relevance_score);
     return items;
   }, [results, filter, search, sort]);
@@ -256,6 +258,21 @@ function App() {
           </div>
         </div>
         <div className="config-section">
+          <div className="config-label">Focus</div>
+          <div className="chip-row">
+            <span className={`chip chip-engine ${noSponsorship ? 'selected' : ''}`}
+              title="Hide jobs that need US/UK/EU work authorization, citizenship or visa sponsorship"
+              onClick={() => !isRunning && setNoSponsorship(v => !v)}>
+              No sponsorship needed
+            </span>
+            <span className={`chip chip-engine ${contractOnly ? 'selected' : ''}`}
+              title="Only contractor, freelance, B2B or PJ work"
+              onClick={() => !isRunning && setContractOnly(v => !v)}>
+              Contract only
+            </span>
+          </div>
+        </div>
+        <div className="config-section">
           <div className="config-actions">
             <select value={timeRange} onChange={e => setTimeRange(e.target.value)} disabled={isRunning}>
               <option value="24h">Last 24 hours</option>
@@ -301,7 +318,7 @@ function App() {
                 <span className={`tag ${r.result_type === 'job' ? 'tag-job' : 'tag-post'}`}>{r.result_type === 'job' ? 'JOB' : 'POST'}</span>
                 <span className="card-title">{r.title}</span>
               </div>
-              <div className="card-meta">{r.company_or_author}{r.location && r.location !== 'Not specified' ? ` \u2022 ${r.location}` : ''}</div>
+              <div className="card-meta">{[r.company_or_author, r.location !== 'Not specified' && r.location, r.posted_at && `Posted ${r.posted_at}`, r.seniority && r.seniority !== 'Not Applicable' && r.seniority, r.employment_type, r.applicants].filter(Boolean).join(' \u2022 ')}</div>
               <div className="card-snippet">{r.snippet}</div>
               <a className="card-link" href={r.url} target="_blank" rel="noopener noreferrer">View on LinkedIn &rarr;</a>
             </div>
