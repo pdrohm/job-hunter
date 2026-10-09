@@ -46,7 +46,16 @@ print("\n━━━ Message Formatting Tests ━━━")
 msg = notifier.format_opportunity(make_opp(title="Dev <Senior> & Lead", posted_at="2026-10-08",
                                            seniority="Not Applicable", applicants="12 applicants"))
 test("Escapes HTML in title", "Dev &lt;Senior&gt; &amp; Lead" in msg, msg)
-test("Shows posted date", "Posted 2026-10-08" in msg)
+test("Shows age line", "🕒" in msg)
+
+from datetime import datetime, timedelta, timezone
+today = datetime.now(timezone.utc).date()
+fresh = notifier.format_opportunity(make_opp(posted_at=today.isoformat(), original_age_days=0.3))
+test("Fresh job says 'hoje'", "🕒 hoje" in fresh and "repost" not in fresh, fresh)
+yday = notifier.format_opportunity(make_opp(posted_at=(today - timedelta(days=1)).isoformat()))
+test("Yesterday says 'ontem'", "🕒 ontem" in yday)
+repost = notifier.format_opportunity(make_opp(posted_at=today.isoformat(), original_age_days=65))
+test("Repost shows real age", "♻️ vaga original há ~2 meses (repost)" in repost, repost)
 test("Hides 'Not Applicable' seniority", "Not Applicable" not in msg)
 test("Shows applicants", "12 applicants" in msg)
 test("Has LinkedIn link", 'href="https://www.linkedin.com/jobs/view/4475865328/"' in msg)

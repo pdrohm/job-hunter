@@ -23,7 +23,7 @@ import requests
 from dotenv import load_dotenv
 
 import focus
-from rn_linkedin_scraper import Opportunity
+from rn_linkedin_scraper import Opportunity, _age_days_from_iso
 
 log = logging.getLogger("notifier")
 
@@ -168,6 +168,33 @@ def format_salary(salary: str) -> str:
     return line
 
 
+def _days_ago(days: float) -> str:
+    d = int(days)
+    if d <= 0:
+        return "hoje"
+    if d == 1:
+        return "ontem"
+    if d < 30:
+        return f"há {d} dias"
+    months = round(d / 30)
+    return f"há ~{months} {'mês' if months == 1 else 'meses'}"
+
+
+REPOST_NOTE_MIN_GAP_DAYS = 3
+
+
+def format_age(opp: Opportunity) -> str:
+    """'🕒 hoje' or '🕒 ontem · ♻️ vaga original há ~2 meses (repost)'."""
+    listed = _age_days_from_iso(opp.posted_at)
+    real = opp.original_age_days
+    if listed is None and real is None:
+        return ""
+    line = f"🕒 {_days_ago(listed if listed is not None else real)}"
+    if real is not None and real - (listed or 0) >= REPOST_NOTE_MIN_GAP_DAYS:
+        line += f" · ♻️ vaga original {_days_ago(real)} (repost)"
+    return line
+
+
 def _about(opp: Opportunity) -> str:
     """First sentences of the description: what the job/company is about."""
     text = " ".join((opp.description or opp.snippet or "").split())
@@ -201,10 +228,13 @@ def format_opportunity(opp: Opportunity, index: int = None) -> str:
         opp.employment_type,
         opp.seniority if opp.seniority not in ("", "Not Applicable") else "",
         opp.applicants,
-        f"Posted {opp.posted_at}" if opp.posted_at else "",
     ) if x]
     if work:
         lines.append("🧾 " + e(" · ".join(work)))
+
+    age = format_age(opp)
+    if age:
+        lines.append(age)
 
     tags = focus.tech_tags(text)
     if tags:

@@ -228,6 +228,40 @@ test("All have scores assigned", all(o.relevance_score >= 0 for o in ranked))
 
 
 # ─────────────────────────────────────────────
+# Real Job Age Tests
+# ─────────────────────────────────────────────
+print("\n━━━ Real Job Age Tests ━━━")
+
+from rn_linkedin_scraper import (LINKEDIN_JOB_IDS_PER_DAY, annotate_original_age, estimate_job_age_days,
+                                 filter_old_postings)
+
+frontier = 4477811473
+test("Newest job is 0 days old", estimate_job_age_days(str(frontier), frontier) == 0)
+test("ID one day behind ≈ 1 day", abs(estimate_job_age_days(str(frontier - LINKEDIN_JOB_IDS_PER_DAY), frontier) - 1) < 0.01)
+# Real case seen on 2026-10-09: listed "5 hours ago", ID 4242574766
+test("Old repost detected as > 1 year", estimate_job_age_days("4242574766", frontier) > 365)
+test("Non-numeric ID → None", estimate_job_age_days("", frontier) is None)
+
+jobs = [
+    make_opp(title="New", url="https://www.linkedin.com/jobs/view/4477811473/", job_id="4477811473"),
+    make_opp(title="Week", url="https://www.linkedin.com/jobs/view/4475000000/", job_id="4475000000"),
+    make_opp(title="Repost", url="https://www.linkedin.com/jobs/view/4242574766/", job_id="4242574766"),
+    make_opp(title="Post", result_type=ResultType.POST, url="https://www.linkedin.com/posts/x"),
+]
+annotate_original_age(jobs)
+kept = [o.title for o in filter_old_postings(jobs, 7)]
+test("7-day filter drops old repost, keeps fresh and posts", kept == ["New", "Week", "Post"], str(kept))
+
+new_score = compute_relevance("React Native Dev", "x", ResultType.JOB, posted_at="", age_days=0.2)
+old_score = compute_relevance("React Native Dev", "x", ResultType.JOB, posted_at="", age_days=60)
+test("Recency bonus uses real age", new_score > old_score, f"{new_score} vs {old_score}")
+from datetime import date
+repost_score = compute_relevance("React Native Dev", "x", ResultType.JOB,
+                                 posted_at=date.today().isoformat(), age_days=60)
+test("Repost gets no 'fresh' bonus", repost_score == old_score, f"{repost_score} vs {old_score}")
+
+
+# ─────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────
 print(f"\n{'━' * 50}")

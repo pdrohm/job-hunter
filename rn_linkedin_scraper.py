@@ -75,6 +75,8 @@ class Opportunity:
     # clause usually sits at the very end, past the stored truncation.
     work_auth_blocker: str = ""
     contractor: bool = False
+    # Real age from the job ID (LinkedIn shows the REPOST date as "posted")
+    original_age_days: Optional[float] = None
 
     @property
     def uid(self) -> str:
@@ -311,9 +313,12 @@ HIRING_SIGNALS = {
 }
 
 
-def _recency_bonus(posted_at: str) -> float:
-    """Fresh listings get more replies — early applicants win."""
+def _recency_bonus(posted_at: str, age_days: Optional[float] = None) -> float:
+    """Fresh listings get more replies — early applicants win.
+    age_days (true age from the job ID) wins over the repost date."""
     age = _age_days_from_iso(posted_at)
+    if age_days is not None:
+        age = max(age or 0.0, age_days)
     if age is None:
         return 0.0
     if age <= 1:
@@ -345,6 +350,7 @@ def compute_relevance(
     extra_signals: dict = None,
     posted_at: str = "",
     applicants: str = "",
+    age_days: Optional[float] = None,
 ) -> float:
     """Score 0-100 based on hiring intent, tech relevance and freshness."""
     combined = f"{title} {snippet}"
@@ -372,7 +378,7 @@ def compute_relevance(
     if has_preferred_region(combined):
         score += 5
 
-    score += _recency_bonus(posted_at)
+    score += _recency_bonus(posted_at, age_days)
     score += _applicants_bonus(applicants)
 
     # Normalize to 0-100
@@ -558,6 +564,40 @@ def extract_linkedin_job_id(url: str) -> str:
 
 def canonical_job_url(job_id: str) -> str:
     return f"https://www.linkedin.com/jobs/view/{job_id}/"
+
+
+# LinkedIn job IDs grow steadily: the newest ID of each day rose ~430k/day
+# (measured 2026-09-15 → 2026-10-09: 4,467.8M → 4,477.8M). LinkedIn shows a
+# refreshed/reposted job as "5 hours ago", but its ID keeps the real age.
+LINKEDIN_JOB_IDS_PER_DAY = 430_000
+
+
+def estimate_job_age_days(job_id: str, frontier_id: int) -> Optional[float]:
+    """Days since the job was first created, from how far its ID is behind the
+    newest ID seen in this run (≈ now). None if the ID isn't numeric."""
+    if not job_id or not job_id.isdigit() or not frontier_id:
+        return None
+    return max(0.0, (frontier_id - int(job_id)) / LINKEDIN_JOB_IDS_PER_DAY)
+
+
+def annotate_original_age(opportunities: list["Opportunity"]) -> None:
+    ids = [int(o.job_id) for o in opportunities if o.job_id.isdigit()]
+    if not ids:
+        return
+    frontier = max(ids)
+    for opp in opportunities:
+        opp.original_age_days = estimate_job_age_days(opp.job_id, frontier)
+
+
+def filter_old_postings(opportunities: list["Opportunity"], max_age_days: float) -> list["Opportunity"]:
+    """Drop jobs first created more than max_age_days ago, even when LinkedIn
+    lists them as new (reposts). Jobs without an ID (posts) pass."""
+    kept = [o for o in opportunities
+            if o.original_age_days is None or o.original_age_days <= max_age_days]
+    dropped = len(opportunities) - len(kept)
+    if dropped:
+        log.info("Filtered out %d old jobs reposted as new (original > %d days)", dropped, max_age_days)
+    return kept
 
 
 def build_google_linkedin_search_url(query: str, search_type: str = "jobs", time_range: str = DEFAULT_TIME_RANGE) -> str:
@@ -1462,6 +1502,7 @@ def rank_opportunities(opportunities: list[Opportunity], extra_signals: dict = N
         opp.relevance_score = compute_relevance(
             opp.title, text, opp.result_type, extra_signals,
             posted_at=opp.posted_at, applicants=opp.applicants,
+            age_days=opp.original_age_days,
         )
         opp.relevance_score = max(0.0, min(100.0, round(opp.relevance_score + _focus_adjustment(opp), 1)))
     return sorted(opportunities, key=lambda o: (o.relevance_score, o.posted_at), reverse=True)
@@ -1479,6 +1520,7 @@ def run_scraper(
     contract_only: bool = False,
     exclude_sponsorship: bool = True,
     exclude_countries: Optional[list[str]] = None,
+    max_job_age_days: Optional[float] = None,
 ) -> list[Opportunity]:
     """CLI entry point. Same pipeline as the web app, with log output.
 
@@ -1505,6 +1547,7 @@ def run_scraper(
         contract_only=contract_only,
         exclude_sponsorship=exclude_sponsorship,
         exclude_countries=exclude_countries,
+        max_job_age_days=max_job_age_days,
     )
 
 
@@ -1527,6 +1570,7 @@ def run_scraper_with_progress(
     contract_only: bool = False,
     exclude_sponsorship: bool = True,
     exclude_countries: Optional[list[str]] = None,
+    max_job_age_days: Optional[float] = None,
 ) -> list[Opportunity]:
     """Multi-tech, multi-engine scraper with live progress callbacks.
 
@@ -1543,6 +1587,8 @@ def run_scraper_with_progress(
         exclude_sponsorship: drop jobs that need local work authorization,
                    citizenship, clearance or visa sponsorship.
         exclude_countries: drop jobs located in these countries (e.g. ["Brazil"]).
+        max_job_age_days: drop jobs FIRST posted more than this many days ago
+                   (true age from the job ID; catches old jobs reposted as new).
     """
     from tech_profiles import TECH_PROFILES
 
@@ -1671,6 +1717,11 @@ def run_scraper_with_progress(
 
     pipeline = deduplicate(pipeline)
     cb({"log_line": f"  After dedup: {len(pipeline)}"})
+
+    annotate_original_age(pipeline)
+    if max_job_age_days is not None:
+        pipeline = filter_old_postings(pipeline, max_job_age_days)
+        cb({"log_line": f"  After real-age filter (≤{max_job_age_days:g}d): {len(pipeline)}"})
 
     pipeline = filter_non_remote(pipeline, defer_posts=enrich)
     cb({"log_line": f"  After remote filter: {len(pipeline)}"})
@@ -1939,6 +1990,12 @@ def main():
         help="Comma-separated countries to skip, e.g. Brazil",
     )
     parser.add_argument(
+        "--max-job-age-days",
+        type=float,
+        default=None,
+        help="Drop jobs first posted more than N days ago (catches reposts)",
+    )
+    parser.add_argument(
         "--contract-only",
         action="store_true",
         help="Keep only contractor / freelance / B2B work",
@@ -1971,6 +2028,7 @@ def main():
         contract_only=args.contract_only,
         exclude_sponsorship=not args.allow_sponsorship,
         exclude_countries=[x.strip() for x in args.exclude_countries.split(",") if x.strip()],
+        max_job_age_days=args.max_job_age_days,
     )
 
     # Format output
