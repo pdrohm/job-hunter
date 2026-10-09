@@ -46,10 +46,35 @@ print("\n━━━ Message Formatting Tests ━━━")
 msg = notifier.format_opportunity(make_opp(title="Dev <Senior> & Lead", posted_at="2026-10-08",
                                            seniority="Not Applicable", applicants="12 applicants"))
 test("Escapes HTML in title", "Dev &lt;Senior&gt; &amp; Lead" in msg, msg)
-test("Shows posted date", "Posted 2026-10-08" in msg)
+test("Shows age line", "🕒" in msg)
+
+from datetime import datetime, timedelta, timezone
+today = datetime.now(timezone.utc).date()
+fresh = notifier.format_opportunity(make_opp(posted_at=today.isoformat(), original_age_days=0.3))
+test("Fresh job says 'hoje'", "🕒 hoje" in fresh and "repost" not in fresh, fresh)
+yday = notifier.format_opportunity(make_opp(posted_at=(today - timedelta(days=1)).isoformat()))
+test("Yesterday says 'ontem'", "🕒 ontem" in yday)
+repost = notifier.format_opportunity(make_opp(posted_at=today.isoformat(), original_age_days=65))
+test("Repost shows real age", "♻️ vaga original há ~2 meses (repost)" in repost, repost)
 test("Hides 'Not Applicable' seniority", "Not Applicable" not in msg)
 test("Shows applicants", "12 applicants" in msg)
 test("Has LinkedIn link", 'href="https://www.linkedin.com/jobs/view/4475865328/"' in msg)
+test("Shows company", "🏢 TechCo" in msg)
+test("Says when salary is unknown", "salário não informado" in msg)
+
+rich = notifier.format_opportunity(make_opp(
+    title="Senior Mobile Engineer", company_or_author="Kraken", location="Latin America",
+    salary="$110,400.00/yr - $220,800.00/yr", employment_type="Contract",
+    description="Kraken builds crypto trading apps used by millions. You will work on React Native, Expo and TypeScript."))
+test("Shows salary as given", "$110,400.00/yr - $220,800.00/yr" in rich)
+test("Shows monthly estimate", "≈ $9.2k–18.4k/mês" in rich, rich)
+test("Shows tech stack", "React Native, Expo, TypeScript" in rich)
+test("Shows LATAM flag", "aceita LATAM" in rich)
+test("Shows what the job is about", "crypto trading apps" in rich)
+low = notifier.format_opportunity(make_opp(salary="$4,000 - $5,000 a month"))
+test("Warns below minimum", "abaixo do seu mínimo" in low)
+ok = notifier.format_opportunity(make_opp(salary="USD 40-50/hour"))
+test("Hourly converted, no warning", "≈ $6.4k–8k/mês" in ok and "abaixo" not in ok, ok)
 
 long_text = "\n\n".join(["x" * 1000] * 10)
 chunks = notifier.split_message(long_text)
@@ -66,10 +91,14 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID":
         mock.patch("notifier.requests.post") as post:
     post.return_value = mock.Mock(status_code=200, content=b"{}", json=lambda: {"ok": True})
     notifier.notify_new([make_opp(), make_opp(job_id="2", url="https://x/2")])
-    payload = post.call_args.kwargs["json"]
+    sent = [c.kwargs["json"] for c in post.call_args_list]
+    payload = sent[-1]
     test("Sends to configured chat", payload["chat_id"] == "42")
     test("Uses HTML parse mode", payload["parse_mode"] == "HTML")
-    test("Header counts jobs", "2 new jobs" in payload["text"], payload["text"][:60])
+    test("Header counts jobs", "2 new jobs" in sent[0]["text"], sent[0]["text"][:60])
+    test("One message per job + header", len(sent) == 3, str(len(sent)))
+    test("Each job has its own button", sent[1]["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+         == "apply:4475865328")
 
     post.reset_mock()
     notifier.notify_new([])

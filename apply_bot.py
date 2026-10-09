@@ -49,6 +49,9 @@ REPO_DIR = Path(__file__).parent
 PLAYWRIGHT_MCP = "@playwright/mcp@0.0.82"
 CLAUDE_TIMEOUT_SECONDS = 15 * 60
 POLL_TIMEOUT_SECONDS = 50
+STEP_BUDGET_USD = "3"  # hard cap per fill/fix/submit step (claude --max-budget-usd)
+INTENT_BUDGET_USD = "0.10"
+INTENT_TIMEOUT_SECONDS = 90
 
 # The ONLY tools Claude may use. Anything else is denied in print mode.
 # Left out on purpose: browser_run_code_unsafe and browser_evaluate (run code),
@@ -132,7 +135,51 @@ SUBMIT_PROMPT = """SUBMIT NOW. The candidate approved the form as shown in the l
 Click the final submit button once. Wait for the confirmation, take a screenshot named
 "submitted.png" and reply with the JSON block (status "submitted", or "failed" with the reason)."""
 
+# Free-text messages are routed by a small Claude call with NO tools at all.
+# It only picks an action; the bot code does the action. Submitting is never
+# an action: the final send always needs the ✅ button.
+INTENT_ACTIONS = ["apply", "edit", "submit", "cancel", "status", "memory", "help", "chat"]
+
+INTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "action": {"type": "string", "enum": INTENT_ACTIONS},
+        "url": {"type": "string"},
+        "text": {"type": "string"},
+        "reply": {"type": "string"},
+    },
+    "required": ["action"],
+}
+
+INTENT_PROMPT = """You route messages for "Job Hunter", a Telegram bot that fills job application
+forms for its owner. Pick ONE action for the message and reply with only the JSON object.
+
+Actions:
+- "apply": the owner wants to apply to a job. Copy the job link EXACTLY from the message into "url".
+  Never invent or complete a link. No link in the message → use "chat" and ask for the link.
+- "edit": the owner wants to change something in the form under review. Put the full change
+  in "text", as the owner wrote it.
+- "submit": the owner says to send / submit / pode enviar the application.
+- "cancel": stop / give up / cancel the current application.
+- "status": asks what is happening / how it is going.
+- "memory": asks what the bot learned / remembers.
+- "help": asks what the bot can do.
+- "chat": anything else. Put a short reply in Brazilian Portuguese (1–2 sentences) in "reply".
+
+Current state: {state}
+
+<message>
+{text}
+</message>"""
+
 HELP_TEXT = """<b>Job Hunter · candidaturas</b>
+
+Pode falar normal comigo, por exemplo:
+• <i>candidata nessa: https://...</i>
+• <i>muda o salário para 7k</i>
+• <i>como tá?</i> · <i>cancela</i> · <i>o que você aprendeu?</i>
+
+Ou use os comandos:
 
 /candidatar &lt;link&gt; – preencho o formulário e mando para você aprovar
 /status – o que estou fazendo
@@ -161,6 +208,7 @@ class Config:
     chrome_bin: str
     claude_bin: str
     model: str
+    intent_model: str = "haiku"
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -174,6 +222,7 @@ class Config:
             chrome_bin=_env("APPLY_CHROME_BIN", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
             claude_bin=_env("APPLY_CLAUDE_BIN", shutil.which("claude") or "claude"),
             model=_env("APPLY_MODEL", "sonnet"),
+            intent_model=_env("APPLY_INTENT_MODEL", "haiku"),
         )
 
     def problems(self) -> list[str]:
@@ -254,11 +303,23 @@ def parse_report(text: str) -> dict:
     return {}
 
 
+def clean_env() -> dict:
+    """Environment for child `claude` runs, without the variables that tie a
+    process to a parent Claude Code session (when the bot itself was started
+    from inside Claude Code, the child would otherwise join that session)."""
+    drop = ("CLAUDECODE", "CLAUDE_CODE_", "CLAUDE_PID", "CLAUDE_EFFORT")
+    return {k: v for k, v in os.environ.items() if not k.startswith(drop)}
+
+
 def build_claude_cmd(cfg: Config, prompt: str, mcp_config: Path, resume_session: str = "") -> list[str]:
     cmd = [
         cfg.claude_bin, "-p", prompt,
         "--output-format", "json",
         "--model", cfg.model,
+        "--tools", "",  # no built-in tools at all (shell, files, web): browser MCP only
+        # Skip ~/.claude settings: your plugins' hooks must not inject text into this run
+        "--setting-sources", "local",
+        "--max-budget-usd", STEP_BUDGET_USD,
         "--mcp-config", str(mcp_config),
         "--strict-mcp-config",  # ignore your other MCP servers
         "--allowedTools", *[f"mcp__browser__{t}" for t in ALLOWED_BROWSER_TOOLS],
@@ -284,8 +345,8 @@ def run_claude(cfg: Config, workdir: Path, prompt: str, resume_session: str = ""
     }}}))
     cmd = build_claude_cmd(cfg, prompt, mcp_config, resume_session)
     try:
-        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True,
-                              timeout=CLAUDE_TIMEOUT_SECONDS)
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              timeout=CLAUDE_TIMEOUT_SECONDS, env=clean_env())
     except subprocess.TimeoutExpired:
         return ClaudeResult(False, "Claude took too long (timeout).", resume_session)
 
@@ -303,6 +364,52 @@ def run_claude(cfg: Config, workdir: Path, prompt: str, resume_session: str = ""
         report=parse_report(text),
         cost_usd=float(out.get("total_cost_usd") or 0),
     )
+
+
+def build_intent_cmd(cfg: Config, prompt: str) -> list[str]:
+    return [
+        cfg.claude_bin, "-p", prompt,
+        "--output-format", "json",
+        "--model", cfg.intent_model,
+        "--tools", "",  # no tools: it can only answer
+        "--setting-sources", "local",  # no user plugins/hooks
+        "--strict-mcp-config",  # and no MCP servers
+        "--json-schema", json.dumps(INTENT_SCHEMA),
+        "--max-budget-usd", INTENT_BUDGET_USD,
+    ]
+
+
+def _parse_intent(out: dict) -> dict:
+    """Structured output may come as a field or as JSON text in "result"."""
+    for candidate in (out.get("structured_output"), out.get("result")):
+        if isinstance(candidate, dict):
+            return candidate
+        if isinstance(candidate, str):
+            text = candidate.strip()
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                try:
+                    return json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    continue
+    return {}
+
+
+def classify_intent(cfg: Config, text: str, state: str) -> dict:
+    """Ask a small, tool-less Claude what the owner wants. Returns {} on failure."""
+    workdir = cfg.home / "intent"
+    workdir.mkdir(parents=True, exist_ok=True)
+    cmd = build_intent_cmd(cfg, INTENT_PROMPT.format(state=state, text=text[:2000]))
+    try:
+        proc = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              timeout=INTENT_TIMEOUT_SECONDS, env=clean_env())
+        intent = _parse_intent(json.loads(proc.stdout))
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, ValueError) as e:
+        log.warning("Intent call failed: %s", e)
+        return {}
+    if intent.get("action") not in INTENT_ACTIONS:
+        return {}
+    return intent
 
 
 # ─────────────────────────────────────────────
@@ -534,11 +641,65 @@ class ApplyBot:
         elif cmd in ("/memoria", "/memory"):
             self.say(self.memory.summary())
         elif self.app and self.app.stage == "editing" and text:
-            self.memory.add_correction(text, self.app.report)
-            # "fixing" = busy, so a second message can't start a parallel run
-            self.run_step(self.app, "fixing", EDIT_PROMPT.format(text=text, n=self.app.review_n + 1))
-        elif extract_url(text):
-            self.start_application(extract_url(text))
+            self.apply_edit(text)
+        elif not self.app and extract_url(text) and len(text.split()) == 1:
+            self.start_application(extract_url(text))  # just a link: no need to ask Claude
+        elif text:
+            threading.Thread(target=self.route_free_text, args=(text,), daemon=True).start()
+        else:
+            self.say(HELP_TEXT)
+
+    def apply_edit(self, text: str):
+        self.memory.add_correction(text, self.app.report)
+        # "fixing" = busy, so a second message can't start a parallel run
+        self.run_step(self.app, "fixing", EDIT_PROMPT.format(text=text, n=self.app.review_n + 1))
+
+    def state_text(self) -> str:
+        app = self.app
+        if not app:
+            return "idle (no application open)"
+        who = " · ".join(x for x in (app.report.get("role"), app.report.get("company")) if x)
+        return f"application {app.stage}: {app.url}" + (f" ({who})" if who else "")
+
+    def route_free_text(self, text: str):
+        """Natural language → one bot action. Claude only classifies; it can't act."""
+        try:
+            notifier.call("sendChatAction", {"chat_id": self.cfg.chat_id, "action": "typing"})
+        except RuntimeError:
+            pass
+        intent = classify_intent(self.cfg, text, self.state_text())
+        action = intent.get("action", "")
+        app = self.app
+
+        if action == "apply":
+            url = intent.get("url", "").strip()
+            if not url or url not in text:  # never trust a link the model wrote itself
+                url = extract_url(text)
+            if url:
+                self.start_application(url)
+            else:
+                self.say("Qual é o link da vaga?")
+        elif action == "edit":
+            if app and app.stage in ("review", "editing"):
+                self.apply_edit(intent.get("text") or text)
+            elif app:
+                self.say("Estou trabalhando nela agora. Espere a próxima screenshot para corrigir.")
+            else:
+                self.say("Não há nenhum formulário aberto. Mande o link de uma vaga.")
+        elif action == "submit":
+            if app and app.stage == "review":
+                self.say("Para enviar, toque em <b>✅ Enviar</b>. O envio final é sempre pelo botão, por segurança.",
+                         review_keyboard(app.id))
+            else:
+                self.say("Não há nenhum formulário pronto para enviar.")
+        elif action == "cancel":
+            self.cancel()
+        elif action == "status":
+            self.say(self.status_text())
+        elif action == "memory":
+            self.say(self.memory.summary())
+        elif action == "chat" and intent.get("reply"):
+            self.say(html.escape(intent["reply"][:1000]))
         else:
             self.say(HELP_TEXT)
 

@@ -17,11 +17,13 @@ import logging
 import os
 import sys
 import time
+from typing import Optional
 
 import requests
 from dotenv import load_dotenv
 
-from rn_linkedin_scraper import Opportunity
+import focus
+from rn_linkedin_scraper import Opportunity, _age_days_from_iso
 
 log = logging.getLogger("notifier")
 
@@ -118,20 +120,6 @@ def buttons(rows: list[list[tuple[str, str]]]) -> dict:
     return {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in rows]}
 
 
-APPLY_BUTTON_LABEL_CHARS = 30
-
-
-def apply_keyboard(opportunities: list[Opportunity]) -> dict:
-    """One "Candidatar" button per job. callback_data is capped at 64 bytes by
-    Telegram, so it carries only the LinkedIn job ID (posts have none)."""
-    rows = []
-    for i, opp in enumerate(opportunities, 1):
-        if opp.job_id:
-            label = f"📝 {i}. {opp.title}"[:APPLY_BUTTON_LABEL_CHARS]
-            rows.append([(label, f"apply:{opp.job_id}")])
-    return buttons(rows) if rows else None
-
-
 def split_message(text: str, limit: int = MAX_MESSAGE_CHARS) -> list[str]:
     """Split on blank lines so a job entry (and its HTML tags) is never cut in half."""
     chunks, current = [], ""
@@ -148,23 +136,118 @@ def split_message(text: str, limit: int = MAX_MESSAGE_CHARS) -> list[str]:
     return chunks
 
 
+MIN_MONTHLY_USD = float(os.environ.get("WATCH_MIN_MONTHLY_USD", "") or 6000)
+ABOUT_CHARS = 220
+
+
+def apply_button(opp: Opportunity) -> Optional[dict]:
+    """Candidatar button for one job. callback_data is capped at 64 bytes by
+    Telegram, so it carries only the LinkedIn job ID (posts have none)."""
+    if not opp.job_id:
+        return None
+    return buttons([[("📝 Candidatar", f"apply:{opp.job_id}")]])
+
+
+def _k(value: float) -> str:
+    return f"{value / 1000:.1f}k".replace(".0k", "k")
+
+
+def format_salary(salary: str) -> str:
+    """'$110,400.00/yr - $220,800.00/yr' → '$110,400.00/yr - $220,800.00/yr (≈ $9.2k–18.4k/mês)'
+    plus a warning when even the top is below your monthly minimum."""
+    if not salary:
+        return "💰 salário não informado"
+    line = f"💰 {html.escape(salary)}"
+    monthly = focus.monthly_usd_range(salary)
+    if monthly:
+        low, high = monthly
+        rng = f"${_k(low)}" if round(low) == round(high) else f"${_k(low)}–{_k(high)}"
+        line += f" (≈ {rng}/mês)"
+        if high < MIN_MONTHLY_USD:
+            line += " ⚠️ abaixo do seu mínimo"
+    return line
+
+
+def _days_ago(days: float) -> str:
+    d = int(days)
+    if d <= 0:
+        return "hoje"
+    if d == 1:
+        return "ontem"
+    if d < 30:
+        return f"há {d} dias"
+    months = round(d / 30)
+    return f"há ~{months} {'mês' if months == 1 else 'meses'}"
+
+
+REPOST_NOTE_MIN_GAP_DAYS = 3
+
+
+def format_age(opp: Opportunity) -> str:
+    """'🕒 hoje' or '🕒 ontem · ♻️ vaga original há ~2 meses (repost)'."""
+    listed = _age_days_from_iso(opp.posted_at)
+    real = opp.original_age_days
+    if listed is None and real is None:
+        return ""
+    line = f"🕒 {_days_ago(listed if listed is not None else real)}"
+    if real is not None and real - (listed or 0) >= REPOST_NOTE_MIN_GAP_DAYS:
+        line += f" · ♻️ vaga original {_days_ago(real)} (repost)"
+    return line
+
+
+def _about(opp: Opportunity) -> str:
+    """First sentences of the description: what the job/company is about."""
+    text = " ".join((opp.description or opp.snippet or "").split())
+    if not text or text.lower().startswith(opp.title.lower()[:20]):
+        return ""
+    if len(text) <= ABOUT_CHARS:
+        return text
+    cut = text[:ABOUT_CHARS]
+    end = max(cut.rfind(". "), cut.rfind("! "))
+    return (cut[:end + 1] if end > 80 else cut.rsplit(" ", 1)[0] + "…")
+
+
 def format_opportunity(opp: Opportunity, index: int = None) -> str:
     e = html.escape
     prefix = f"{index}. " if index is not None else ""
-    lines = [f'<b>{prefix}{e(opp.title)}</b> · {round(opp.relevance_score)} pts']
-    meta = [opp.company_or_author]
+    kind = "" if opp.result_type == "job" else " · post"
+    lines = [f"<b>{prefix}{e(opp.title)}</b>{kind} · {round(opp.relevance_score)} pts"]
+
+    place = f"🏢 {e(opp.company_or_author)}"
     if opp.location and opp.location != "Not specified":
-        meta.append(opp.location)
-    lines.append(e(" · ".join(meta)))
-    extra = [x for x in (
-        f"Posted {opp.posted_at}" if opp.posted_at else "",
-        opp.seniority if opp.seniority not in ("", "Not Applicable") else "",
+        place += f" · 📍 {e(opp.location)}"
+    lines.append(place)
+
+    if opp.result_type == "job" or opp.salary:
+        lines.append(format_salary(opp.salary))
+
+    text = " ".join([opp.title, opp.snippet, opp.description])
+    contract = opp.contractor or focus.is_contractor(text, opp.employment_type)
+    work = [x for x in (
+        "Contractor" if contract and opp.employment_type.lower() != "contract" else "",
         opp.employment_type,
+        opp.seniority if opp.seniority not in ("", "Not Applicable") else "",
         opp.applicants,
     ) if x]
-    if extra:
-        lines.append(e(" · ".join(extra)))
-    lines.append(f'<a href="{e(opp.url, quote=True)}">Open on LinkedIn</a>')
+    if work:
+        lines.append("🧾 " + e(" · ".join(work)))
+
+    age = format_age(opp)
+    if age:
+        lines.append(age)
+
+    tags = focus.tech_tags(text)
+    if tags:
+        lines.append("🛠 " + e(", ".join(tags)))
+    if focus.is_open_abroad(f"{opp.location} {text}"):
+        lines.append("🌎 aceita LATAM / qualquer lugar")
+
+    about = _about(opp)
+    if about:
+        lines.append(f"<i>{e(about)}</i>")
+
+    source = "LinkedIn" if "linkedin.com" in opp.url else "a vaga"
+    lines.append(f'<a href="{e(opp.url, quote=True)}">Abrir no {source}</a>')
     return "\n".join(lines)
 
 
@@ -175,11 +258,15 @@ def format_digest(opportunities: list[Opportunity], header: str) -> str:
 
 
 def notify_new(opportunities: list[Opportunity], header: str = None):
+    """A header, then one message per job with its own Candidatar button,
+    so the button always sits right under the job it applies to."""
     if not opportunities:
         return
     n = len(opportunities)
     header = header or f"🔔 {n} new job{'s' if n != 1 else ''}"
-    send_message(format_digest(opportunities, header), reply_markup=apply_keyboard(opportunities))
+    send_message(f"<b>{html.escape(header)}</b>")
+    for i, opp in enumerate(opportunities, 1):
+        send_message(format_opportunity(opp, i), reply_markup=apply_button(opp))
 
 
 def print_chat_ids():

@@ -13,6 +13,7 @@ All functions take plain text so they are easy to test.
 """
 
 import re
+from typing import Optional
 
 # ─────────────────────────────────────────────
 # Work authorization / sponsorship blockers
@@ -208,3 +209,76 @@ def located_in(location: str, countries: list[str]) -> str:
 def looks_portuguese(text: str, min_hits: int = 2) -> bool:
     """Posts have no location; a Portuguese post is almost always a Brazil job."""
     return len(_PORTUGUESE_HINTS.findall(text or "")) >= min_hits
+
+
+# ─────────────────────────────────────────────
+# Job summary helpers (for alerts)
+# ─────────────────────────────────────────────
+
+_MONEY = r"(?:USD|US\$|\$)\s?\d[\d,]*(?:\.\d+)?\s?[kK]?"
+_PERIOD = r"(?:\s?(?:/|per|a)\s?(?:year|yr|annum|month|mo|hour|hr|h)\b)?"
+# "$110,400.00/yr - $220,800.00/yr" (LinkedIn) and "$120k - $150k per year" both match
+_SALARY_RE = re.compile(
+    _MONEY + _PERIOD
+    + r"(?:\s?(?:-|–|—|to)\s?(?:" + _MONEY + r"|\d[\d,]*(?:\.\d+)?\s?[kK]?)" + _PERIOD + r")?",
+    re.IGNORECASE,
+)
+
+
+def extract_salary(text: str) -> str:
+    """First salary-looking amount in a job text, e.g. '$120k - $150k/yr'.
+    Ignores tiny amounts (e.g. '$5 coffee') that aren't pay."""
+    for m in _SALARY_RE.finditer(text or ""):
+        values = _amounts(m.group(0))
+        if values and max(values) >= 15:  # $15/hr is the smallest plausible pay
+            return " ".join(m.group(0).split())
+    return ""
+
+
+def _amounts(text: str) -> list[float]:
+    out = []
+    for num, k in re.findall(r"(\d[\d,]*(?:\.\d+)?)\s?([kK]?)", text):
+        try:
+            value = float(num.replace(",", ""))
+        except ValueError:
+            continue
+        out.append(value * 1000 if k else value)
+    return out
+
+
+def monthly_usd_range(salary: str) -> Optional[tuple[float, float]]:
+    """Convert a salary string to a USD/month (low, high) range.
+    Hourly → ×160 h, yearly → ÷12. Unknown period: guess by size."""
+    values = _amounts(salary)
+    if not values:
+        return None
+    low, high = min(values), max(values)
+    s = salary.lower()
+    if re.search(r"/\s?h(?:ou)?r\b|per\s+hour|\bhourly\b|/\s?h\b", s):
+        factor = 160
+    elif re.search(r"year|yr|annum|annual", s):
+        factor = 1 / 12
+    elif re.search(r"month|/\s?mo\b", s):
+        factor = 1
+    else:
+        factor = 1 / 12 if high >= 20000 else (160 if high < 300 else 1)
+    return (low * factor, high * factor)
+
+
+TECH_TAGS = [
+    "React Native", "Expo", "TypeScript", "JavaScript", "React", "Swift", "Kotlin",
+    "Objective-C", "Node.js", "NestJS", "GraphQL", "Redux", "Zustand", "Firebase",
+    "iOS", "Android", "Flutter", "AWS", "Next.js",
+]
+_TECH_PATTERNS = [(t, re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)", re.IGNORECASE)) for t in TECH_TAGS]
+
+
+def tech_tags(text: str, limit: int = 6) -> list[str]:
+    found = [t for t, p in _TECH_PATTERNS if p.search(text or "")]
+    if "React Native" in found and "React" in found:
+        found.remove("React")  # "React Native" already says it
+    return found[:limit]
+
+
+def is_open_abroad(text: str) -> bool:
+    return bool(_OPEN_ABROAD_RE.search(text or ""))

@@ -142,6 +142,20 @@ kept = [o.title for o in filter_excluded_countries(opps, ["Brazil"])]
 test("Country filter drops BR job and PT post", kept == ["RN MX", "Post EN"], str(kept))
 test("Empty list keeps all", len(filter_excluded_countries(opps, [])) == 4)
 
+# Same job posted in Brazil and Argentina: the Argentina copy must survive
+from unittest import mock as _mock
+import rn_linkedin_scraper as rls
+br = make_opp(title="RN Dev", company_or_author="Acme", location="Brazil",
+              url="https://www.linkedin.com/jobs/view/1111111111/", job_id="1111111111", source="linkedin_jobs")
+ar = make_opp(title="RN Dev", company_or_author="Acme", location="Buenos Aires, Argentina",
+              url="https://www.linkedin.com/jobs/view/2222222222/", job_id="2222222222", source="linkedin_jobs")
+with _mock.patch.object(rls, "scrape_linkedin_jobs_page", return_value=[br, ar]), \
+        _mock.patch.object(rls, "time"):
+    out = rls.run_scraper_with_progress(engines=["linkedin"], enrich=False, exclude_countries=["Brazil"],
+                                        exclude_sponsorship=False)
+test("Multi-country repost keeps non-excluded copy", [o.location for o in out] == ["Buenos Aires, Argentina"],
+     str([o.location for o in out]))
+
 
 # ─────────────────────────────────────────────
 print("\n━━━ Pipeline Filter Tests ━━━")
