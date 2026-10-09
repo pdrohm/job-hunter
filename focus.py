@@ -164,3 +164,47 @@ def looks_country_only(location: str, text: str) -> bool:
     if not loc or not _COUNTRY_ONLY_LOCATION.search(loc):
         return False
     return not _OPEN_ABROAD_RE.search(f"{loc} {text or ''}")
+
+
+# ─────────────────────────────────────────────
+# Excluded countries (e.g. skip local Brazilian jobs for now)
+# ─────────────────────────────────────────────
+
+# LinkedIn locations usually end in ", Brazil", but metro areas don't
+# ("Greater Porto Alegre", "São Paulo Metropolitan Area"), so list big cities too.
+COUNTRY_LOCATION_ALIASES = {
+    "brazil": [
+        "brazil", "brasil", "são paulo", "sao paulo", "rio de janeiro", "belo horizonte",
+        "porto alegre", "curitiba", "florianópolis", "florianopolis", "recife", "campinas",
+        "brasília", "brasilia", "salvador", "fortaleza", "goiânia", "goiania", "manaus",
+        "joinville", "blumenau", "guarulhos", "santa catarina", "minas gerais",
+        "rio grande do sul", "paraná", "pernambuco",
+    ],
+}
+
+# Words that only show up in Portuguese job posts
+_PORTUGUESE_HINTS = re.compile(
+    r"\b(?:vaga|vagas|contratação|contratando|estamos|oportunidade|remoto|remota|"
+    r"desenvolvedor(?:a)?|você|benefícios|requisitos|salário|clt)\b",
+    re.IGNORECASE,
+)
+
+
+def _country_patterns(country: str) -> list[re.Pattern]:
+    aliases = COUNTRY_LOCATION_ALIASES.get(country.strip().lower(), [country.strip().lower()])
+    return [re.compile(r"(?<!\w)" + re.escape(a) + r"(?!\w)", re.IGNORECASE) for a in aliases]
+
+
+def located_in(location: str, countries: list[str]) -> str:
+    """Return the excluded country the location is in, or ''."""
+    if not location or not countries:
+        return ""
+    for country in countries:
+        if any(p.search(location) for p in _country_patterns(country)):
+            return country
+    return ""
+
+
+def looks_portuguese(text: str, min_hits: int = 2) -> bool:
+    """Posts have no location; a Portuguese post is almost always a Brazil job."""
+    return len(_PORTUGUESE_HINTS.findall(text or "")) >= min_hits

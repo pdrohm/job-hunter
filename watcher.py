@@ -15,6 +15,7 @@ Config (environment variables or .env):
     WATCH_LOCATIONS          LinkedIn search locations  (default: Worldwide,Latin America,Brazil)
     WATCH_CONTRACT_ONLY      true = only contractor/B2B (default: false)
     WATCH_ALLOW_SPONSORSHIP  true = keep jobs needing work authorization (default: false)
+    WATCH_EXCLUDE_COUNTRIES  comma-separated countries to skip, e.g. Brazil (default: none)
     WATCH_TIME_RANGE         24h, 3d, 1w, ...           (default: 24h)
     WATCH_INTERVAL_MINUTES   minutes between runs       (default: 120)
     WATCH_MIN_SCORE          only notify at/above score (default: 50)
@@ -122,6 +123,7 @@ def run_once(dry_run: bool = False, seed: bool = False) -> int:
         locations=_env_list("WATCH_LOCATIONS", "Worldwide,Latin America,Brazil"),
         contract_only=_env_bool("WATCH_CONTRACT_ONLY", False),
         exclude_sponsorship=not _env_bool("WATCH_ALLOW_SPONSORSHIP", False),
+        exclude_countries=_env_list("WATCH_EXCLUDE_COUNTRIES", ""),
     )
 
     store = SeenStore(_data_dir() / "seen_jobs.json")

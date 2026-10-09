@@ -53,6 +53,7 @@ jobs:
           WATCH_MIN_SCORE: ${{ vars.WATCH_MIN_SCORE }}
           WATCH_TECHS: ${{ vars.WATCH_TECHS }}
           WATCH_LOCATIONS: ${{ vars.WATCH_LOCATIONS }}
+          WATCH_EXCLUDE_COUNTRIES: ${{ vars.WATCH_EXCLUDE_COUNTRIES }}
           WATCH_TIME_RANGE: ${{ vars.WATCH_TIME_RANGE }}
           WATCH_ENGINES: ${{ vars.WATCH_ENGINES }}
           WATCH_MAX_PER_RUN: ${{ vars.WATCH_MAX_PER_RUN }}
