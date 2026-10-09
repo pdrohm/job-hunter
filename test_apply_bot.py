@@ -251,6 +251,51 @@ with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"
 
 
 # ─────────────────────────────────────────────
+print("\n━━━ Pause / Idle Tests ━━━")
+
+with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
+        mock.patch("apply_bot.threading.Thread", InlineThread), \
+        mock.patch("apply_bot.close_chrome") as close, mock.patch("apply_bot.chrome_running", return_value=True), \
+        mock.patch("apply_bot.run_claude") as rc, mock.patch("apply_bot.classify_intent") as ci:
+    rc.return_value = fake_result("ready")
+    bot = SyncBot(cfg)
+    bot.handle_update(update_msg("/pausar"))
+    test("/pausar pauses", bot.paused and "pausado" in bot.said[-1][0])
+    test("Pausing with nothing open closes Chrome", close.called)
+    bot.handle_update(update_msg("/candidatar https://x.com/1"))
+    test("Paused bot does not apply", bot.app is None and "pausado" in bot.said[-1][0])
+    bot.handle_update(update_cb("apply:4475865328"))
+    test("Paused bot ignores Candidatar button", bot.app is None)
+    test("Status says paused", "pausado" in bot.status_text())
+    test("Pause survives a restart", SyncBot(cfg).paused)
+
+    ci.return_value = {"action": "resume"}
+    bot.handle_update(update_msg("ativa o aplicar"))
+    test("'ativa o aplicar' resumes", not bot.paused and "ativado" in bot.said[-1][0])
+    test("Resume survives a restart", not SyncBot(cfg).paused)
+
+    ci.return_value = {"action": "pause"}
+    bot.handle_update(update_msg("/candidatar https://x.com/2"))
+    bot.handle_update(update_msg("pausa o aplicar"))
+    test("Pause keeps the open application", bot.app is not None and "continua" in bot.said[-1][0])
+    bot.handle_update(update_msg("/cancelar"))
+    bot.handle_update(update_msg("/ativar"))
+
+    close.reset_mock()
+    bot.last_activity = apply_bot.time.time()
+    bot.close_chrome_if_idle()
+    test("Recent activity keeps Chrome", not close.called)
+    bot.last_activity -= apply_bot.CHROME_IDLE_SECONDS + 1
+    bot.close_chrome_if_idle()
+    test("Idle Chrome is closed", close.called)
+    close.reset_mock()
+    bot.app = object()
+    bot.close_chrome_if_idle()
+    test("Chrome stays open during an application", not close.called)
+    bot.app = None
+
+
+# ─────────────────────────────────────────────
 print("\n━━━ Memory Tests ━━━")
 
 history = json.loads(cfg.memory_path.read_text())

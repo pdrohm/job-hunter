@@ -52,6 +52,9 @@ POLL_TIMEOUT_SECONDS = 50
 STEP_BUDGET_USD = "3"  # hard cap per fill/fix/submit step (claude --max-budget-usd)
 INTENT_BUDGET_USD = "0.10"
 INTENT_TIMEOUT_SECONDS = 90
+# Chrome is the only heavy part. Close it when no application is open for this
+# long (a few minutes, so a second application right after reuses it).
+CHROME_IDLE_SECONDS = 5 * 60
 
 # The ONLY tools Claude may use. Anything else is denied in print mode.
 # Left out on purpose: browser_run_code_unsafe and browser_evaluate (run code),
@@ -138,7 +141,7 @@ Click the final submit button once. Wait for the confirmation, take a screenshot
 # Free-text messages are routed by a small Claude call with NO tools at all.
 # It only picks an action; the bot code does the action. Submitting is never
 # an action: the final send always needs the ✅ button.
-INTENT_ACTIONS = ["apply", "edit", "submit", "cancel", "status", "memory", "help", "chat"]
+INTENT_ACTIONS = ["apply", "edit", "submit", "cancel", "status", "memory", "pause", "resume", "help", "chat"]
 
 INTENT_SCHEMA = {
     "type": "object",
@@ -163,6 +166,8 @@ Actions:
 - "cancel": stop / give up / cancel the current application.
 - "status": asks what is happening / how it is going.
 - "memory": asks what the bot learned / remembers.
+- "pause": turn applying OFF for now (pausa / desativa / para de aplicar).
+- "resume": turn applying back ON (ativa / liga / volta a aplicar).
 - "help": asks what the bot can do.
 - "chat": anything else. Put a short reply in Brazilian Portuguese (1–2 sentences) in "reply".
 
@@ -178,6 +183,7 @@ Pode falar normal comigo, por exemplo:
 • <i>candidata nessa: https://...</i>
 • <i>muda o salário para 7k</i>
 • <i>como tá?</i> · <i>cancela</i> · <i>o que você aprendeu?</i>
+• <i>pausa o aplicar</i> · <i>ativa o aplicar</i>
 
 Ou use os comandos:
 
@@ -185,6 +191,7 @@ Ou use os comandos:
 /status – o que estou fazendo
 /cancelar – paro a candidatura atual
 /memoria – o que aprendi com as suas correções
+/pausar · /ativar – desliga / liga as candidaturas
 
 Também pode tocar em <b>📝 Candidatar</b> nos alertas de vagas."""
 
@@ -274,6 +281,21 @@ def ensure_chrome(cfg: Config):
         except requests.RequestException:
             continue
     raise RuntimeError("Chrome did not start")
+
+
+def chrome_running(cfg: Config) -> bool:
+    try:
+        requests.get(f"{chrome_endpoint(cfg)}/json/version", timeout=2)
+        return True
+    except requests.RequestException:
+        return False
+
+
+def close_chrome(cfg: Config):
+    """Quit the bot's Chrome (only that one: matched by its own profile dir)."""
+    profile_dir = cfg.home / "chrome-profile"
+    subprocess.run(["pkill", "-f", f"--user-data-dir={profile_dir}"],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 # ─────────────────────────────────────────────
@@ -577,8 +599,32 @@ class ApplyBot:
         self.cfg = cfg
         self.memory = AnswerMemory(cfg.memory_path)
         self.app: Optional[Application] = None
+        self.state_path = cfg.home / "state.json"
+        self.paused = self._load_paused()
+        self.last_activity = time.time()
         self.lock = threading.Lock()
         self.offset = 0
+
+    # ── Pause / resume (saved, so a restart keeps it) ──
+
+    def _load_paused(self) -> bool:
+        try:
+            return bool(json.loads(self.state_path.read_text()).get("paused", False))
+        except (OSError, ValueError, AttributeError):
+            return False
+
+    def set_paused(self, paused: bool):
+        self.paused = paused
+        self.cfg.home.mkdir(parents=True, exist_ok=True)
+        self.state_path.write_text(json.dumps({"paused": paused}))
+        if paused:
+            note = " A candidatura aberta continua até você terminar ou cancelar." if self.app else ""
+            if not self.app:
+                close_chrome(self.cfg)
+            self.say(f"⏸️ <b>Aplicar pausado.</b> Não começo novas candidaturas.{note}\n"
+                     "Diga <i>ativa o aplicar</i> (ou /ativar) para voltar.")
+        else:
+            self.say("▶️ <b>Aplicar ativado.</b> Mande um link ou toque em 📝 Candidatar.")
 
     # ── Telegram plumbing ─────────────────────
 
@@ -640,6 +686,10 @@ class ApplyBot:
             self.cancel()
         elif cmd in ("/memoria", "/memory"):
             self.say(self.memory.summary())
+        elif cmd in ("/pausar", "/pause"):
+            self.set_paused(True)
+        elif cmd in ("/ativar", "/resume"):
+            self.set_paused(False)
         elif self.app and self.app.stage == "editing" and text:
             self.apply_edit(text)
         elif not self.app and extract_url(text) and len(text.split()) == 1:
@@ -698,6 +748,10 @@ class ApplyBot:
             self.say(self.status_text())
         elif action == "memory":
             self.say(self.memory.summary())
+        elif action == "pause":
+            self.set_paused(True)
+        elif action == "resume":
+            self.set_paused(False)
         elif action == "chat" and intent.get("reply"):
             self.say(html.escape(intent["reply"][:1000]))
         else:
@@ -731,6 +785,8 @@ class ApplyBot:
     def status_text(self) -> str:
         app = self.app
         if not app:
+            if self.paused:
+                return "⏸️ Aplicar está <b>pausado</b>. Diga <i>ativa o aplicar</i> para voltar."
             return "Livre. Envie /candidatar &lt;link&gt;."
         mins = int((time.time() - app.started_at) // 60)
         return f"Etapa: <b>{app.stage}</b> · {mins} min\n{html.escape(app.url)}"
@@ -744,11 +800,16 @@ class ApplyBot:
             self.say("Estou no meio de um passo. Cancelo assim que ele acabar.")
         _log_application(self.cfg, app, "cancelled")
         self.app = None
+        self.last_activity = time.time()
         self.say("❌ Cancelado. Nada foi enviado.")
 
     # ── Application flow ──────────────────────
 
     def start_application(self, url: str):
+        if self.paused:
+            self.say("⏸️ Aplicar está pausado. Diga <i>ativa o aplicar</i> (ou /ativar) e mande de novo.")
+            return
+        self.last_activity = time.time()
         with self.lock:
             if self.app:
                 self.say("Já estou numa candidatura. Termine-a ou use /cancelar.\n\n" + self.status_text())
@@ -792,6 +853,7 @@ class ApplyBot:
                 # Final answers already include the corrections: reuse them next time
                 self.memory.add_submitted_answers({**approved_report, **{
                     k: v for k, v in result.report.items() if k == "answers" and v}})
+                self.last_activity = time.time()
                 self.send_screenshot(app, result.report.get("screenshot", ""),
                                      "🎉 <b>Candidatura enviada!</b>\n" + format_report(result.report) + cost)
                 self.app = None
@@ -843,6 +905,16 @@ class ApplyBot:
                     self.handle_update(update)
                 except Exception:
                     log.exception("Failed to handle update")
+            self.close_chrome_if_idle()
+
+    def close_chrome_if_idle(self):
+        """No open application for CHROME_IDLE_SECONDS → quit Chrome to free memory.
+        Runs once per poll (≤ 50 s), so it costs nothing."""
+        if self.app or time.time() - self.last_activity < CHROME_IDLE_SECONDS:
+            return
+        if chrome_running(self.cfg):
+            log.info("Closing idle Chrome")
+            close_chrome(self.cfg)
 
 
 def main():
