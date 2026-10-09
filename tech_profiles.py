@@ -26,6 +26,13 @@ TECH_PROFILES = {
             '"react native" open role remote',
             '"react native" remote opportunity',
             '"expo" "react native" mobile remote',
+            'react native contractor remote',
+            'react native freelance remote',
+            'react native latam remote',
+            'react native worldwide remote',
+            'react native work from anywhere',
+            'react native vaga remoto',
+            'react native b2b remote',
         ],
         "filter_keywords": [
             "react native", "react-native", "reactnative", "expo",

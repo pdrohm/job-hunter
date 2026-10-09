@@ -101,8 +101,12 @@ def _cleanup_stale_sessions():
                 pass
 
 
+DEFAULT_LOCATIONS = ["Worldwide", "Latin America", "Brazil"]
+
+
 def do_scrape(session_id: str, time_range: str = DEFAULT_TIME_RANGE,
-              techs: list[str] = None, engines: list[str] = None):
+              techs: list[str] = None, engines: list[str] = None,
+              contract_only: bool = False, allow_sponsorship: bool = False):
     session = _get_session(session_id)
     status = session["status"]
     if status["is_running"]:
@@ -117,6 +121,9 @@ def do_scrape(session_id: str, time_range: str = DEFAULT_TIME_RANGE,
             on_progress=_make_progress_callback(session_id),
             techs=techs,
             engines=engines,
+            locations=DEFAULT_LOCATIONS,
+            contract_only=contract_only,
+            exclude_sponsorship=not allow_sponsorship,
         )
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -180,6 +187,7 @@ def get_engines():
     """Return available search engines."""
     return [
         {"id": "linkedin", "label": "LinkedIn Jobs"},
+        {"id": "yahoo", "label": "Yahoo (posts)"},
         {"id": "duckduckgo", "label": "DuckDuckGo"},
         {"id": "bing", "label": "Bing"},
         {"id": "google", "label": "Google"},
@@ -205,6 +213,8 @@ def trigger_scrape(
     time_range: str = DEFAULT_TIME_RANGE,
     techs: Optional[str] = None,
     engines: Optional[str] = None,
+    contract_only: bool = False,
+    allow_sponsorship: bool = False,
     session_id: Optional[str] = Cookie(None),
 ):
     sid = _ensure_session_cookie(session_id, response)
@@ -223,7 +233,7 @@ def trigger_scrape(
 
     threading.Thread(
         target=do_scrape,
-        args=(sid, time_range, tech_list, engine_list),
+        args=(sid, time_range, tech_list, engine_list, contract_only, allow_sponsorship),
         daemon=True,
     ).start()
     return {"status": "started", "message": f"Scrape started ({time_range})."}
