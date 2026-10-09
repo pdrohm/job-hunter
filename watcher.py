@@ -6,6 +6,7 @@ Usage:
     python watcher.py            # Loop forever (every WATCH_INTERVAL_MINUTES)
     python watcher.py --once     # One run, then exit (for cron / GitHub Actions)
     python watcher.py --dry-run  # Print new jobs instead of sending them
+    python watcher.py --seed     # Mark current jobs as seen, send nothing
 
 Config (environment variables or .env):
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   required (see notifier.py)
@@ -40,8 +41,14 @@ log = logging.getLogger("watcher")
 SEEN_TTL_DAYS = 60  # forget jobs after this, keeps the file small
 
 
+def _env(name: str, default: str) -> str:
+    """Env var, treating empty as unset (GitHub Actions passes unset vars as "")."""
+    value = os.environ.get(name, "").strip()
+    return value or default
+
+
 def _env_list(name: str, default: str) -> list[str]:
-    return [x.strip() for x in os.environ.get(name, default).split(",") if x.strip()]
+    return [x.strip() for x in _env(name, default).split(",") if x.strip()]
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -52,7 +59,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _data_dir() -> Path:
-    return Path(os.environ.get("DATA_DIR", Path(__file__).parent / "data"))
+    return Path(_env("DATA_DIR", str(Path(__file__).parent / "data")))
 
 
 class SeenStore:
@@ -100,14 +107,15 @@ def select_new(results: list[Opportunity], store: SeenStore, min_score: float) -
     return [o for o in results if store.is_new(o) and o.relevance_score >= min_score]
 
 
-def run_once(dry_run: bool = False) -> int:
-    """One scrape + notify cycle. Returns the number of new jobs sent."""
-    min_score = float(os.environ.get("WATCH_MIN_SCORE", "50"))
-    max_per_run = int(os.environ.get("WATCH_MAX_PER_RUN", "15"))
+def run_once(dry_run: bool = False, seed: bool = False) -> int:
+    """One scrape + notify cycle. Returns the number of new jobs sent.
+    seed=True only fills the seen store (e.g. first run on a new machine)."""
+    min_score = float(_env("WATCH_MIN_SCORE", "50"))
+    max_per_run = int(_env("WATCH_MAX_PER_RUN", "15"))
 
     results = run_scraper_with_progress(
         max_results=200,
-        time_range=os.environ.get("WATCH_TIME_RANGE", "24h"),
+        time_range=_env("WATCH_TIME_RANGE", "24h"),
         on_progress=lambda e: log.info(e["log_line"]) if "log_line" in e else None,
         techs=_env_list("WATCH_TECHS", "react_native"),
         engines=_env_list("WATCH_ENGINES", "linkedin,yahoo"),
@@ -119,7 +127,7 @@ def run_once(dry_run: bool = False) -> int:
     store = SeenStore(_data_dir() / "seen_jobs.json")
     first_run = store.is_empty
     new = select_new(results, store, min_score)
-    to_send = new[:max_per_run]
+    to_send = [] if seed else new[:max_per_run]
 
     if first_run and to_send:
         header = f"👋 Job Hunter started. Top {len(to_send)} jobs right now:"
@@ -149,7 +157,13 @@ def main():
     parser = argparse.ArgumentParser(description="Send new jobs to Telegram")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--dry-run", action="store_true", help="Print instead of sending")
+    parser.add_argument("--seed", action="store_true",
+                        help="Mark current jobs as seen without sending (first run on a new machine)")
     args = parser.parse_args()
+
+    if args.seed:
+        run_once(seed=True)
+        return
 
     if not args.dry_run and not notifier.is_configured():
         raise SystemExit("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first (see notifier.py).")
@@ -158,7 +172,7 @@ def main():
         run_once(dry_run=args.dry_run)
         return
 
-    interval = int(os.environ.get("WATCH_INTERVAL_MINUTES", "120")) * 60
+    interval = int(_env("WATCH_INTERVAL_MINUTES", "120")) * 60
     while True:
         try:
             run_once()
