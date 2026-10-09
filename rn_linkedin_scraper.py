@@ -1407,6 +1407,28 @@ def filter_sponsorship(opportunities: list[Opportunity]) -> list[Opportunity]:
     return filtered
 
 
+def filter_excluded_countries(opportunities: list[Opportunity], countries: list[str]) -> list[Opportunity]:
+    """Drop jobs located in the given countries. Posts have no location, so for
+    Brazil a post written in Portuguese counts as a Brazil job."""
+    if not countries:
+        return opportunities
+    skip_portuguese = any(c.strip().lower() == "brazil" for c in countries)
+    filtered = []
+    excluded = 0
+    for opp in opportunities:
+        if focus.located_in(opp.location, countries):
+            excluded += 1
+            continue
+        if skip_portuguese and opp.result_type == ResultType.POST and focus.looks_portuguese(
+                " ".join([opp.title, opp.snippet, opp.description])):
+            excluded += 1
+            continue
+        filtered.append(opp)
+    if excluded:
+        log.info("Filtered out %d results in excluded countries (%s)", excluded, ", ".join(countries))
+    return filtered
+
+
 def filter_contract(opportunities: list[Opportunity]) -> list[Opportunity]:
     """Keep only contractor / freelance / B2B work."""
     filtered = [
@@ -1450,6 +1472,7 @@ def run_scraper(
     locations: Optional[list[str]] = None,
     contract_only: bool = False,
     exclude_sponsorship: bool = True,
+    exclude_countries: Optional[list[str]] = None,
 ) -> list[Opportunity]:
     """CLI entry point. Same pipeline as the web app, with log output.
 
@@ -1475,6 +1498,7 @@ def run_scraper(
         locations=locations,
         contract_only=contract_only,
         exclude_sponsorship=exclude_sponsorship,
+        exclude_countries=exclude_countries,
     )
 
 
@@ -1496,6 +1520,7 @@ def run_scraper_with_progress(
     locations: Optional[list[str]] = None,
     contract_only: bool = False,
     exclude_sponsorship: bool = True,
+    exclude_countries: Optional[list[str]] = None,
 ) -> list[Opportunity]:
     """Multi-tech, multi-engine scraper with live progress callbacks.
 
@@ -1511,6 +1536,7 @@ def run_scraper_with_progress(
         contract_only: keep only contractor / freelance / B2B work.
         exclude_sponsorship: drop jobs that need local work authorization,
                    citizenship, clearance or visa sponsorship.
+        exclude_countries: drop jobs located in these countries (e.g. ["Brazil"]).
     """
     from tech_profiles import TECH_PROFILES
 
@@ -1633,6 +1659,10 @@ def run_scraper_with_progress(
     pipeline = filter_india(pipeline)
     cb({"log_line": f"  After India filter: {len(pipeline)}"})
 
+    if exclude_countries:
+        pipeline = filter_excluded_countries(pipeline, exclude_countries)
+        cb({"log_line": f"  After country filter ({', '.join(exclude_countries)}): {len(pipeline)}"})
+
     pipeline = filter_non_remote(pipeline, defer_posts=enrich)
     cb({"log_line": f"  After remote filter: {len(pipeline)}"})
 
@@ -1670,6 +1700,9 @@ def run_scraper_with_progress(
     if exclude_sponsorship:
         pipeline = filter_sponsorship(pipeline)
         cb({"log_line": f"  After sponsorship filter (full text): {len(pipeline)}"})
+
+    if exclude_countries:  # posts only get their full text after enrichment
+        pipeline = filter_excluded_countries(pipeline, exclude_countries)
 
     if contract_only:
         pipeline = filter_contract(pipeline)
@@ -1892,6 +1925,11 @@ def main():
         help="Comma-separated LinkedIn search locations (default: Worldwide,Latin America,Brazil)",
     )
     parser.add_argument(
+        "--exclude-countries",
+        default="",
+        help="Comma-separated countries to skip, e.g. Brazil",
+    )
+    parser.add_argument(
         "--contract-only",
         action="store_true",
         help="Keep only contractor / freelance / B2B work",
@@ -1923,6 +1961,7 @@ def main():
         locations=[x.strip() for x in args.locations.split(",") if x.strip()],
         contract_only=args.contract_only,
         exclude_sponsorship=not args.allow_sponsorship,
+        exclude_countries=[x.strip() for x in args.exclude_countries.split(",") if x.strip()],
     )
 
     # Format output

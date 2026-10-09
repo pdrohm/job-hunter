@@ -112,6 +112,38 @@ test("Empty location", not looks_country_only("", ""))
 
 
 # ─────────────────────────────────────────────
+print("\n━━━ Excluded Country Tests ━━━")
+
+from focus import located_in, looks_portuguese
+from rn_linkedin_scraper import filter_excluded_countries
+
+test("'Brazil' excluded", located_in("Brazil", ["Brazil"]) == "Brazil")
+test("City, state, Brazil excluded", bool(located_in("São Paulo, São Paulo, Brazil", ["Brazil"])))
+test("Metro area without country excluded", bool(located_in("Greater Porto Alegre", ["Brazil"])))
+test("Florianópolis excluded", bool(located_in("Florianópolis, Santa Catarina", ["Brazil"])))
+test("Mexico kept", not located_in("Guadalajara, Jalisco, Mexico", ["Brazil"]))
+test("Latin America kept", not located_in("Latin America", ["Brazil"]))
+test("Remote kept", not located_in("Remote", ["Brazil"]))
+test("No countries → nothing excluded", not located_in("Brazil", []))
+test("Other country works", bool(located_in("Lisbon, Portugal", ["Portugal"])))
+test("Portuguese post detected", looks_portuguese("Vaga remota para desenvolvedor React Native, contratação PJ"))
+test("English post not Portuguese", not looks_portuguese("Hiring a remote React Native developer, contract role"))
+test("One word is not enough", not looks_portuguese("Remote role, we hire in LATAM (remoto ok)"))
+
+opps = [
+    make_opp(title="RN BR", location="Brazil"),
+    make_opp(title="RN MX", location="Mexico City, Mexico"),
+    make_opp(title="Post PT", result_type=ResultType.POST, location="Not specified",
+             url="https://www.linkedin.com/posts/pt", description="Estamos contratando! Vaga remota React Native."),
+    make_opp(title="Post EN", result_type=ResultType.POST, location="Not specified",
+             url="https://www.linkedin.com/posts/en", description="We are hiring a remote React Native engineer."),
+]
+kept = [o.title for o in filter_excluded_countries(opps, ["Brazil"])]
+test("Country filter drops BR job and PT post", kept == ["RN MX", "Post EN"], str(kept))
+test("Empty list keeps all", len(filter_excluded_countries(opps, [])) == 4)
+
+
+# ─────────────────────────────────────────────
 print("\n━━━ Pipeline Filter Tests ━━━")
 
 opps = [

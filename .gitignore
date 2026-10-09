@@ -5,3 +5,7 @@ data/
 .env
 *.tmp
 .venv/
+apply/profile.md
+apply/resume.pdf
+apply/*.pdf
+apply/memory.json

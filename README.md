@@ -21,3 +21,18 @@ By default the watcher:
 Set `WATCH_CONTRACT_ONLY=true` to get only contractor / freelance / B2B work.
 
 LinkedIn posts come from Yahoo search (`yahoo` engine), and the bot reads each post's full text before it filters.
+
+## Apply bot (Telegram → Claude Code on your Mac)
+
+Send `/candidatar <link>` to your bot, or tap **📝 Candidatar** under a job alert.
+Claude opens the job in a separate Chrome, fills the form, and sends you a screenshot
+plus the answers it wrote. **Nothing is sent until you tap ✅ Enviar.**
+
+1. `cp apply/profile.example.md apply/profile.md` and fill it in (Claude uses only this).
+2. Put your CV at `apply/resume.pdf`.
+3. Test it: `.venv/bin/python apply_bot.py`, then send `/candidatar <link>` on Telegram.
+4. Start it at login: `sh scripts/install_apply_bot_mac.sh`
+
+Safety: only your chat ID is accepted; Claude gets only browser tools (no shell, no
+files, no code execution, no cookies); the browser is a separate Chrome profile; the
+only file it can upload is your CV. History: `~/.job-hunter/applications.jsonl`.

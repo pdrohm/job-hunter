@@ -12,6 +12,7 @@ Setup:
 
 import argparse
 import html
+import json
 import logging
 import os
 import sys
@@ -46,11 +47,19 @@ def is_configured() -> bool:
     return bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
 
 
-def _call(method: str, payload: dict, retries: int = 3) -> dict:
+def call(method: str, payload: dict, retries: int = 3, files: dict = None, timeout: int = 15) -> dict:
+    """Call a Telegram Bot API method. `files` sends multipart (photos, documents)."""
     url = TELEGRAM_API.format(token=_token(), method=method)
     for attempt in range(retries):
         try:
-            resp = requests.post(url, json=payload, timeout=15)
+            if files:
+                for f in files.values():
+                    f.seek(0)  # a retry must re-send the whole file
+                # Multipart fields must be strings; nested JSON (reply_markup) is encoded
+                form = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in payload.items()}
+                resp = requests.post(url, data=form, files=files, timeout=60)
+            else:
+                resp = requests.post(url, json=payload, timeout=timeout)
         except requests.RequestException as e:
             # The URL contains the bot token, and request errors echo the URL
             log.warning("Telegram request failed (%s), retrying",
@@ -70,16 +79,57 @@ def _call(method: str, payload: dict, retries: int = 3) -> dict:
     raise RuntimeError(f"Telegram {method} failed after {retries} attempts")
 
 
-def send_message(text: str):
-    """Send an HTML-formatted message, split into chunks under Telegram's limit."""
-    for chunk in split_message(text):
-        _call("sendMessage", {
+def send_message(text: str, reply_markup: dict = None) -> dict:
+    """Send an HTML-formatted message, split into chunks under Telegram's limit.
+    Buttons (reply_markup) go on the last chunk. Returns the last message."""
+    chunks = split_message(text)
+    message = {}
+    for i, chunk in enumerate(chunks):
+        payload = {
             "chat_id": _chat_id(),
             "text": chunk,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
-        })
+        }
+        if reply_markup and i == len(chunks) - 1:
+            payload["reply_markup"] = reply_markup
+        message = call("sendMessage", payload).get("result", {})
         time.sleep(0.5)  # stay well under 1 msg/sec per chat
+    return message
+
+
+def send_file(path: str, caption: str = "", reply_markup: dict = None) -> dict:
+    """Send an image as a photo (inline preview). Telegram rejects very tall
+    photos (full-page screenshots), so fall back to sending it as a document."""
+    payload = {"chat_id": _chat_id(), "caption": caption[:1024], "parse_mode": "HTML"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        with open(path, "rb") as f:
+            return call("sendPhoto", payload, files={"photo": f}).get("result", {})
+    except RuntimeError as e:
+        log.info("sendPhoto failed (%s), sending as document", e)
+        with open(path, "rb") as f:
+            return call("sendDocument", payload, files={"document": f}).get("result", {})
+
+
+def buttons(rows: list[list[tuple[str, str]]]) -> dict:
+    """[[("label", "callback_data"), ...], ...] → Telegram inline keyboard."""
+    return {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in rows]}
+
+
+APPLY_BUTTON_LABEL_CHARS = 30
+
+
+def apply_keyboard(opportunities: list[Opportunity]) -> dict:
+    """One "Candidatar" button per job. callback_data is capped at 64 bytes by
+    Telegram, so it carries only the LinkedIn job ID (posts have none)."""
+    rows = []
+    for i, opp in enumerate(opportunities, 1):
+        if opp.job_id:
+            label = f"📝 {i}. {opp.title}"[:APPLY_BUTTON_LABEL_CHARS]
+            rows.append([(label, f"apply:{opp.job_id}")])
+    return buttons(rows) if rows else None
 
 
 def split_message(text: str, limit: int = MAX_MESSAGE_CHARS) -> list[str]:
@@ -98,9 +148,10 @@ def split_message(text: str, limit: int = MAX_MESSAGE_CHARS) -> list[str]:
     return chunks
 
 
-def format_opportunity(opp: Opportunity) -> str:
+def format_opportunity(opp: Opportunity, index: int = None) -> str:
     e = html.escape
-    lines = [f'<b>{e(opp.title)}</b> · {round(opp.relevance_score)} pts']
+    prefix = f"{index}. " if index is not None else ""
+    lines = [f'<b>{prefix}{e(opp.title)}</b> · {round(opp.relevance_score)} pts']
     meta = [opp.company_or_author]
     if opp.location and opp.location != "Not specified":
         meta.append(opp.location)
@@ -119,7 +170,7 @@ def format_opportunity(opp: Opportunity) -> str:
 
 def format_digest(opportunities: list[Opportunity], header: str) -> str:
     parts = [f"<b>{html.escape(header)}</b>"]
-    parts.extend(format_opportunity(o) for o in opportunities)
+    parts.extend(format_opportunity(o, i) for i, o in enumerate(opportunities, 1))
     return "\n\n".join(parts)
 
 
@@ -128,12 +179,12 @@ def notify_new(opportunities: list[Opportunity], header: str = None):
         return
     n = len(opportunities)
     header = header or f"🔔 {n} new job{'s' if n != 1 else ''}"
-    send_message(format_digest(opportunities, header))
+    send_message(format_digest(opportunities, header), reply_markup=apply_keyboard(opportunities))
 
 
 def print_chat_ids():
     """Print chat IDs of everyone who recently messaged the bot."""
-    data = _call("getUpdates", {})
+    data = call("getUpdates", {})
     chats = {}
     for update in data.get("result", []):
         msg = update.get("message") or update.get("channel_post") or {}
