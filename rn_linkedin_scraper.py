@@ -69,6 +69,7 @@ class Opportunity:
     seniority: str = ""
     employment_type: str = ""
     applicants: str = ""
+    salary: str = ""  # as shown, e.g. "$110,400.00/yr - $220,800.00/yr"
     description: str = ""  # Truncated job description (LinkedIn detail page)
     # Checked on the FULL description at enrich time: the "no sponsorship"
     # clause usually sits at the very end, past the stored truncation.
@@ -729,6 +730,10 @@ def enrich_linkedin_job(session: requests.Session, opp: Opportunity) -> bool:
     opp.work_auth_blocker = focus.sponsorship_blocker(full_text)
     opp.contractor = focus.is_contractor(f"{opp.title} {full_text}", opp.employment_type)
 
+    # LinkedIn's own pay box first, then any amount in the description
+    salary_el = soup.select_one(".compensation__salary")
+    opp.salary = (salary_el.get_text(" ", strip=True) if salary_el else "") or focus.extract_salary(full_text)
+
     applicants_el = soup.select_one(".num-applicants__caption, .num-applicants__figure")
     if applicants_el:
         opp.applicants = applicants_el.get_text(" ", strip=True)
@@ -1057,6 +1062,7 @@ def enrich_linkedin_post(session: requests.Session, opp: Opportunity) -> bool:
     opp.description = text[:DESCRIPTION_MAX_CHARS]
     opp.work_auth_blocker = focus.sponsorship_blocker(text)
     opp.contractor = focus.is_contractor(text)
+    opp.salary = focus.extract_salary(text)
 
     author_el = soup.select_one('[data-tracking-control-name="public_post_feed-actor-name"]')
     if author_el and opp.company_or_author in ("", "Unknown"):
@@ -1653,15 +1659,18 @@ def run_scraper_with_progress(
 
     pipeline = all_results
 
-    pipeline = deduplicate(pipeline)
-    cb({"log_line": f"  After dedup: {len(pipeline)}"})
-
+    # Location filters run BEFORE dedup: companies post one job in many
+    # countries, and dedup keeps only the first copy. If that copy is the
+    # excluded one (e.g. Brazil), the Argentina/Chile copy would be lost too.
     pipeline = filter_india(pipeline)
     cb({"log_line": f"  After India filter: {len(pipeline)}"})
 
     if exclude_countries:
         pipeline = filter_excluded_countries(pipeline, exclude_countries)
         cb({"log_line": f"  After country filter ({', '.join(exclude_countries)}): {len(pipeline)}"})
+
+    pipeline = deduplicate(pipeline)
+    cb({"log_line": f"  After dedup: {len(pipeline)}"})
 
     pipeline = filter_non_remote(pipeline, defer_posts=enrich)
     cb({"log_line": f"  After remote filter: {len(pipeline)}"})

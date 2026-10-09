@@ -12,8 +12,8 @@ from unittest import mock
 
 import apply_bot
 import notifier
-from apply_bot import (AnswerMemory, ApplyBot, ClaudeResult, Config, build_claude_cmd, extract_url,
-                       format_report, parse_report)
+from apply_bot import (AnswerMemory, ApplyBot, ClaudeResult, Config, _parse_intent, build_claude_cmd,
+                       build_intent_cmd, extract_url, format_report, parse_report)
 
 PASS = "✓"
 FAIL = "✗"
@@ -79,6 +79,17 @@ test("Only browser tools allowed", all(t.startswith("mcp__browser__browser_") fo
 test("No code-execution tool allowed", not any("run_code" in t or "evaluate" in t for t in allowed))
 test("No cookie/storage tool allowed", not any("cookie" in t or "storage" in t for t in allowed))
 test("Shell and file tools disallowed", {"Bash", "Read", "Write", "Edit"} <= set(disallowed))
+test("All built-in tools off", cmd[cmd.index("--tools") + 1] == "")
+test("Step has a cost cap", "--max-budget-usd" in cmd)
+icmd = build_intent_cmd(cfg, "hi")
+test("Router has no tools", icmd[icmd.index("--tools") + 1] == "" and "--mcp-config" not in icmd)
+with mock.patch.dict(apply_bot.os.environ, {"CLAUDE_CODE_SESSION_ID": "x", "CLAUDECODE": "1", "PATH": "/bin"}):
+    env = apply_bot.clean_env()
+test("Child claude not tied to a parent session", "CLAUDE_CODE_SESSION_ID" not in env and "CLAUDECODE" not in env
+     and env.get("PATH") == "/bin")
+test("Router uses small model", icmd[icmd.index("--model") + 1] == "haiku")
+test("Router output is schema-checked", "--json-schema" in icmd)
+test("Router can't submit by itself", "submit" in apply_bot.INTENT_ACTIONS and "SUBMIT NOW" not in apply_bot.INTENT_PROMPT)
 test("Ignores other MCP servers", "--strict-mcp-config" in cmd)
 test("System prompt forbids submit without approval", "SUBMIT NOW" in cmd[cmd.index("--append-system-prompt") + 1])
 test("Resume flag only when resuming", "--resume" not in cmd)
@@ -178,6 +189,68 @@ with mock.patch("apply_bot.ensure_chrome"), \
 
 
 # ─────────────────────────────────────────────
+print("\n━━━ Natural Language Tests ━━━")
+
+test("Intent from structured_output", _parse_intent({"structured_output": {"action": "status"}}) == {"action": "status"})
+test("Intent from result text", _parse_intent({"result": 'ok {"action": "help"}'}) == {"action": "help"})
+test("No intent → empty", _parse_intent({"result": "nothing"}) == {})
+
+
+class InlineThread:
+    def __init__(self, target, args=(), daemon=None):
+        self.target, self.args = target, args
+
+    def start(self):
+        self.target(*self.args)
+
+
+with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
+        mock.patch("apply_bot.threading.Thread", InlineThread), \
+        mock.patch("apply_bot.run_claude") as rc, mock.patch("apply_bot.classify_intent") as ci:
+    bot = SyncBot(cfg)
+    rc.return_value = fake_result("ready")
+
+    ci.return_value = {"action": "apply", "url": "https://jobs.ashbyhq.com/k/9"}
+    bot.handle_update(update_msg("candidata nessa aqui https://jobs.ashbyhq.com/k/9 por favor"))
+    test("'candidata nessa <link>' starts application", bot.app and bot.app.url == "https://jobs.ashbyhq.com/k/9")
+
+    ci.return_value = {"action": "edit", "text": "notice period 2 weeks"}
+    bot.handle_update(update_msg("põe que eu tenho 2 semanas de aviso"))
+    test("Free-text change during review edits the form", "notice period 2 weeks" in bot.prompts[-1])
+
+    ci.return_value = {"action": "submit"}
+    bot.handle_update(update_msg("pode enviar"))
+    caption, kb = bot.said[-1]
+    test("'pode enviar' does NOT submit", not bot.prompts[-1].startswith("SUBMIT NOW"))
+    test("'pode enviar' shows the ✅ button", "✅ Enviar" in caption and kb is not None)
+
+    ci.return_value = {"action": "status"}
+    bot.handle_update(update_msg("como tá?"))
+    test("'como tá?' → status", "Etapa" in bot.said[-1][0])
+
+    ci.return_value = {"action": "cancel"}
+    bot.handle_update(update_msg("deixa pra lá"))
+    test("'deixa pra lá' → cancel", bot.app is None)
+
+    ci.return_value = {"action": "apply", "url": "https://made-up.example/job"}
+    bot.handle_update(update_msg("quero me candidatar naquela da Kraken"))
+    test("Model-invented link is ignored", bot.app is None and "link" in bot.said[-1][0])
+
+    ci.return_value = {"action": "chat", "reply": "Oi! <b>Mande</b> um link."}
+    bot.handle_update(update_msg("oi"))
+    test("Chat reply is HTML-escaped", "&lt;b&gt;" in bot.said[-1][0])
+
+    ci.return_value = {}
+    bot.handle_update(update_msg("asdfgh"))
+    test("Router failure → help", "Pode falar normal" in bot.said[-1][0])
+
+    ci.reset_mock()
+    bot.handle_update(update_msg("https://jobs.lever.co/x/1"))
+    test("Bare link skips the router", not ci.called and bot.app is not None)
+    bot.handle_update(update_msg("/cancelar"))
+
+
+# ─────────────────────────────────────────────
 print("\n━━━ Memory Tests ━━━")
 
 history = json.loads(cfg.memory_path.read_text())
@@ -230,13 +303,11 @@ opps = [
     Opportunity(title="Hiring post", result_type=ResultType.POST, company_or_author="Y",
                 location="", url="u2", snippet=""),
 ]
-kb = notifier.apply_keyboard(opps)
-rows = kb["inline_keyboard"]
-test("One button per job (posts skipped)", len(rows) == 1)
-test("Callback carries job ID", rows[0][0]["callback_data"] == "apply:4475865328")
-test("Callback under 64 bytes", len(rows[0][0]["callback_data"].encode()) <= 64)
-test("Label is short", len(rows[0][0]["text"]) <= notifier.APPLY_BUTTON_LABEL_CHARS)
-test("No buttons when no jobs", notifier.apply_keyboard(opps[1:]) is None)
+btn = notifier.apply_button(opps[0])["inline_keyboard"][0][0]
+test("Button says Candidatar", btn["text"] == "📝 Candidatar")
+test("Callback carries job ID", btn["callback_data"] == "apply:4475865328")
+test("Callback under 64 bytes", len(btn["callback_data"].encode()) <= 64)
+test("No button for posts", notifier.apply_button(opps[1]) is None)
 
 
 # ─────────────────────────────────────────────

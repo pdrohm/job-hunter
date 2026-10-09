@@ -24,7 +24,10 @@ LinkedIn posts come from Yahoo search (`yahoo` engine), and the bot reads each p
 
 ## Apply bot (Telegram → Claude Code on your Mac)
 
-Send `/candidatar <link>` to your bot, or tap **📝 Candidatar** under a job alert.
+Send `/candidatar <link>` to your bot, tap **📝 Candidatar** under a job alert, or just
+talk normally ("candidata nessa: <link>", "muda o salário para 7k", "como tá?", "cancela").
+A small Claude call with no tools reads the message and picks the action; the final
+send is always the ✅ button.
 Claude opens the job in a separate Chrome, fills the form, and sends you a screenshot
 plus the answers it wrote. **Nothing is sent until you tap ✅ Enviar.**
 
