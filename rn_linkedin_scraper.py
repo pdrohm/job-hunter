@@ -75,6 +75,8 @@ class Opportunity:
     # clause usually sits at the very end, past the stored truncation.
     work_auth_blocker: str = ""
     contractor: bool = False
+    # Full description says the job hires worldwide or in LATAM
+    open_abroad: bool = False
     # Real age from the job ID (LinkedIn shows the REPOST date as "posted")
     original_age_days: Optional[float] = None
 
@@ -769,6 +771,7 @@ def enrich_linkedin_job(session: requests.Session, opp: Opportunity) -> bool:
     opp.employment_type = _criteria_value(soup, "Employment type")
     opp.work_auth_blocker = focus.sponsorship_blocker(full_text)
     opp.contractor = focus.is_contractor(f"{opp.title} {full_text}", opp.employment_type)
+    opp.open_abroad = focus.mentions_open_region(full_text)
 
     # LinkedIn's own pay box first, then any amount in the description
     salary_el = soup.select_one(".compensation__salary")
@@ -1035,13 +1038,17 @@ def scrape_bing_for_linkedin_posts(session: requests.Session, query: str, time_r
     return _parse_search_engine_results(soup, query, "bing")
 
 
+POST_SEARCH_BACKENDS = ["yahoo", "bing"]  # each one returns a different top ~7 hits
+
+
 def scrape_yahoo_for_linkedin_posts(session: requests.Session, query: str, time_range: str = DEFAULT_TIME_RANGE) -> list[Opportunity]:
-    """Find LinkedIn posts via Yahoo (Bing-powered), using the `ddgs` library.
+    """Find LinkedIn posts via Yahoo and Bing, using the `ddgs` library.
 
     ddgs impersonates a real browser's TLS fingerprint, which plain `requests`
-    can't do — Yahoo blocks requests. Quotes and time filters make Yahoo return
+    can't do — Yahoo blocks requests. Quotes and time filters make both return
     nothing for site: queries, so we drop them and filter by the date encoded
-    in each post URL instead (filter_stale)."""
+    in each post URL instead (filter_stale). Only ~7 hits come back per search
+    and most are old, so asking two backends finds more fresh posts."""
     try:
         from ddgs import DDGS
         from ddgs.exceptions import DDGSException
@@ -1050,22 +1057,26 @@ def scrape_yahoo_for_linkedin_posts(session: requests.Session, query: str, time_
         return []
 
     search_query = f"site:linkedin.com/posts {query.replace(chr(34), '')}"
-    log.info("Yahoo search [posts]: %s", query)
-    _wait_for_host("search.yahoo.com")
-    try:
-        hits = DDGS(timeout=15).text(search_query, max_results=20, backend="yahoo")
-    except DDGSException as e:
-        log.debug("Yahoo returned nothing for %s: %s", query, e)
-        return []
-    except Exception as e:
-        log.warning("Yahoo search failed: %s", e)
-        return []
+    log.info("Yahoo/Bing search [posts]: %s", query)
+    hits = []
+    for backend in POST_SEARCH_BACKENDS:
+        _wait_for_host(f"ddgs-{backend}")
+        try:
+            hits.extend(DDGS(timeout=15).text(search_query, max_results=20, backend=backend))
+        except DDGSException as e:
+            log.debug("%s returned nothing for %s: %s", backend, query, e)
+        except Exception as e:
+            log.warning("%s search failed: %s", backend, e)
 
     results = []
+    seen_urls = set()
     for hit in hits:
         href = (hit.get("href") or "").split("?")[0]
         if "linkedin.com/posts/" not in href and "linkedin.com/feed/" not in href:
             continue
+        if href in seen_urls:
+            continue
+        seen_urls.add(href)
         title = (hit.get("title") or "LinkedIn Post")[:200]
         author = title.split(" on LinkedIn")[0].split(" | ")[0].split(" - ")[0].strip() or "Unknown"
         results.append(Opportunity(
@@ -1079,7 +1090,7 @@ def scrape_yahoo_for_linkedin_posts(session: requests.Session, query: str, time_
             source="yahoo",
             posted_at=_linkedin_post_date_iso(href),
         ))
-    log.info("  Found %d results for '%s' [yahoo]", len(results), query)
+    log.info("  Found %d results for '%s' [yahoo+bing]", len(results), query)
     return results
 
 
@@ -1102,20 +1113,48 @@ def enrich_linkedin_post(session: requests.Session, opp: Opportunity) -> bool:
     opp.description = text[:DESCRIPTION_MAX_CHARS]
     opp.work_auth_blocker = focus.sponsorship_blocker(text)
     opp.contractor = focus.is_contractor(text)
+    opp.open_abroad = focus.mentions_open_region(text)
     opp.salary = focus.extract_salary(text)
 
+    # The search title is often just the hashtags, so the page wins
     author_el = soup.select_one('[data-tracking-control-name="public_post_feed-actor-name"]')
-    if author_el and opp.company_or_author in ("", "Unknown"):
+    if author_el and author_el.get_text(strip=True):
         opp.company_or_author = author_el.get_text(strip=True)[:100]
     return True
 
 
 def enrich_linkedin_posts(session: requests.Session, opportunities: list[Opportunity], limit: int) -> int:
     done = 0
-    for opp in [o for o in opportunities if o.result_type == ResultType.POST][:limit]:
+    # Posts from LinkedIn's own search already have their full text
+    for opp in [o for o in opportunities if o.result_type == ResultType.POST and not o.description][:limit]:
         if enrich_linkedin_post(session, opp):
             done += 1
     return done
+
+
+def linkedin_posts_to_opportunities(posts: list[dict], query: str) -> list[Opportunity]:
+    """Posts from LinkedIn's own search (linkedin_posts.py) → Opportunity."""
+    results = []
+    for p in posts:
+        text = p.get("text", "")
+        first_line = next((ln.strip() for ln in text.splitlines() if ln.strip()), "LinkedIn Post")
+        results.append(Opportunity(
+            title=first_line[:200],
+            result_type=ResultType.POST,
+            company_or_author=(p.get("author") or "Unknown")[:100],
+            location="Not specified",
+            url=p["url"],
+            snippet=text[:300],
+            description=text[:DESCRIPTION_MAX_CHARS],
+            source_query=query,
+            source="linkedin_posts",
+            posted_at=_linkedin_post_date_iso(p["url"]) or _utcnow().date().isoformat(),
+            work_auth_blocker=focus.sponsorship_blocker(text),
+            contractor=focus.is_contractor(text),
+            open_abroad=focus.mentions_open_region(text),
+            salary=focus.extract_salary(text),
+        ))
+    return results
 
 
 # ─────────────────────────────────────────────
@@ -1173,6 +1212,10 @@ REMOTE_KEYWORDS = [
     "100% remote",
     "telecommute",
     "home office",
+    "remotework",
+    "remotejobs",
+    "remoto",
+    "remota",
 ]
 
 _remote_patterns = [
@@ -1207,7 +1250,7 @@ _onsite_patterns = [
 ]
 
 # "hybrid" alone is ambiguous but we exclude it — user wants fully remote
-_hybrid_pattern = re.compile(r"\bhybrid\b", re.IGNORECASE)
+_hybrid_pattern = re.compile(r"\b(?:hybrid|h[íi]brido|h[íi]brida|presencial)\b", re.IGNORECASE)
 
 
 def is_onsite_or_hybrid(text: str) -> bool:
@@ -1297,15 +1340,31 @@ def _text_matches_patterns(text: str, patterns) -> bool:
     return False
 
 
-def filter_tech_relevance(opportunities: list[Opportunity], tech_keywords: list[str]) -> list[Opportunity]:
+def filter_tech_relevance(
+    opportunities: list[Opportunity], tech_keywords: list[str], rn_only: bool = False,
+    strict: bool = False,
+) -> list[Opportunity]:
     """Keep only opportunities matching the selected tech keywords.
 
     Checks the job description when it was fetched. For LinkedIn direct
-    results, also checks source_query since scraped HTML often truncates titles."""
+    results, also checks source_query since scraped HTML often truncates titles.
+
+    rn_only: React Native / Expo must show up in the job's OWN text (see
+    focus.is_rn_match). LinkedIn's search returns any mobile/frontend job for
+    "react native", so the search words prove nothing.
+    strict: React Native / Expo must be the job, not a side note."""
     patterns = _build_tech_patterns(tech_keywords)
     filtered = []
     excluded_count = 0
     for opp in opportunities:
+        if rn_only:
+            if focus.is_rn_match(opp.title, f"{opp.snippet} {opp.description}", strict=strict):
+                filtered.append(opp)
+            else:
+                excluded_count += 1
+                log.debug("Excluded (not React Native): %s", opp.title[:60])
+            continue
+
         combined_text = " ".join([opp.title, opp.company_or_author, opp.snippet, opp.description])
         if _text_matches_patterns(combined_text, patterns):
             filtered.append(opp)
@@ -1327,7 +1386,7 @@ def filter_tech_relevance(opportunities: list[Opportunity], tech_keywords: list[
 # LinkedIn activity IDs encode a timestamp: (activity_id >> 22) gives ms since epoch
 _linkedin_activity_re = re.compile(r"activity[:-](\d{19})")
 # Also match ugcPost IDs in URLs
-_linkedin_ugc_re = re.compile(r"ugcPost[:-](\d{19})")
+_linkedin_ugc_re = re.compile(r"(?:ugcPost|share)[:-](\d{19})")
 
 def _linkedin_post_datetime(url: str) -> Optional[datetime]:
     """Decode the publish time from a LinkedIn post URL activity/ugcPost ID."""
@@ -1403,24 +1462,85 @@ def filter_stale(
 
 # Recruiter phrases that almost only appear in India-based hiring posts
 _INDIA_HIRING_PHRASES = re.compile(
-    r"\b(?:immediate\s+joiners?|notice\s+period|lpa|ctc|lakhs?|serving\s+notice)\b", re.IGNORECASE
+    r"\b(?:immediate\s+joiners?|notice\s+period|lpa|ctc|lakhs?|serving\s+notice|"
+    r"pvt\.?\s*ltd\.?|private\s+limited)(?!\w)", re.IGNORECASE
 )
 
 
-def filter_india_posts(opportunities: list[Opportunity]) -> list[Opportunity]:
-    """Second India pass for posts, on the full post text."""
+def filter_india_full_text(opportunities: list[Opportunity]) -> list[Opportunity]:
+    """Second India pass, on the full text. Posts: any India mention.
+    Jobs: only India hiring phrases ("based in India", "LPA", "notice period"),
+    because a worldwide job may just list an India office."""
     filtered = []
     excluded = 0
     for opp in opportunities:
-        if opp.result_type == ResultType.POST and opp.description and (
-            is_india_related(opp.description) or _INDIA_HIRING_PHRASES.search(opp.description)
-        ):
+        text = opp.description
+        if not text:
+            filtered.append(opp)
+            continue
+        if opp.result_type == ResultType.POST:
+            india = is_india_related(text) or _INDIA_HIRING_PHRASES.search(text)
+        else:
+            india = _INDIA_HIRING_PHRASES.search(text) or any(p.search(text) for p in _india_remote_patterns)
+        if india:
             excluded += 1
             continue
         filtered.append(opp)
     if excluded:
-        log.info("Filtered out %d India-related posts (full text)", excluded)
+        log.info("Filtered out %d India-related results (full text)", excluded)
     return filtered
+
+
+def filter_region(opportunities: list[Opportunity]) -> list[Opportunity]:
+    """Jobs: keep only LATAM, worldwide, or a foreign country whose text says
+    people abroad / in LATAM can apply. Posts have no location: keep them
+    (the India, remote and sponsorship checks already ran on their text)."""
+    filtered = []
+    excluded = 0
+    for opp in opportunities:
+        if opp.result_type == ResultType.POST or opp.open_abroad or focus.region_ok(
+                opp.location, " ".join([opp.title, opp.snippet, opp.description])):
+            filtered.append(opp)
+            continue
+        excluded += 1
+        log.debug("Excluded (not open to LATAM/worldwide): %s | %s", opp.title[:60], opp.location)
+    if excluded:
+        log.info("Filtered out %d jobs not open to LATAM/worldwide", excluded)
+    return filtered
+
+
+def filter_top_markets(opportunities: list[Opportunity]) -> list[Opportunity]:
+    """Keep only jobs and posts from US / Canada / Europe companies (or for
+    their clients). Drops local LATAM companies (see focus.is_top_market_job)."""
+    filtered = []
+    excluded = 0
+    for opp in opportunities:
+        text = " ".join([opp.title, opp.snippet, opp.description])
+        if focus.is_top_market_job("" if opp.result_type == ResultType.POST else opp.location, text):
+            filtered.append(opp)
+            continue
+        excluded += 1
+        log.debug("Excluded (not a US/Canada/Europe company): %s | %s", opp.title[:60], opp.location)
+    if excluded:
+        log.info("Filtered out %d results not from a US/Canada/Europe company", excluded)
+    return filtered
+
+
+def limit_per_company(opportunities: list[Opportunity], limit: int = 1) -> list[Opportunity]:
+    """Keep the best `limit` results per company (list must be ranked).
+    Agencies post the same role many times, once per country or per client."""
+    counts: dict[str, int] = {}
+    kept = []
+    for opp in opportunities:
+        key = (opp.company_or_author or "").strip().lower()
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+            if counts[key] > limit:
+                continue
+        kept.append(opp)
+    if len(kept) < len(opportunities):
+        log.info("Dropped %d extra results from the same company", len(opportunities) - len(kept))
+    return kept
 
 
 def filter_posts_not_remote(opportunities: list[Opportunity]) -> list[Opportunity]:
@@ -1432,6 +1552,27 @@ def filter_posts_not_remote(opportunities: list[Opportunity]) -> list[Opportunit
             if is_onsite_or_hybrid(text) or not is_remote(text):
                 continue
         filtered.append(opp)
+    return filtered
+
+
+_INTERNSHIP_RE = re.compile(r"\b(?:internships?|interns|trainees?|estágio|estagiári[oa]s?|pasantías?)\b", re.IGNORECASE)
+
+
+def filter_post_intent(opportunities: list[Opportunity]) -> list[Opportunity]:
+    """Posts: keep companies hiring, drop people looking for work (#opentowork)."""
+    filtered = []
+    excluded = 0
+    for opp in opportunities:
+        if opp.result_type == ResultType.POST:
+            text = " ".join([opp.title, opp.snippet, opp.description])
+            if (focus.is_job_seeker_post(text) or not focus.has_hiring_intent(text)
+                    or _INTERNSHIP_RE.search(text)):
+                excluded += 1
+                log.debug("Excluded (not a hiring post): %s", opp.title[:60])
+                continue
+        filtered.append(opp)
+    if excluded:
+        log.info("Filtered out %d posts that are not hiring", excluded)
     return filtered
 
 
@@ -1521,6 +1662,8 @@ def run_scraper(
     exclude_sponsorship: bool = True,
     exclude_countries: Optional[list[str]] = None,
     max_job_age_days: Optional[float] = None,
+    region_only: bool = True,
+    top_markets_only: bool = False,
 ) -> list[Opportunity]:
     """CLI entry point. Same pipeline as the web app, with log output.
 
@@ -1548,12 +1691,18 @@ def run_scraper(
         exclude_sponsorship=exclude_sponsorship,
         exclude_countries=exclude_countries,
         max_job_age_days=max_job_age_days,
+        region_only=region_only,
+        top_markets_only=top_markets_only,
     )
 
 
-POST_MIN_WINDOW_DAYS = 7  # search engines index LinkedIn posts days late
+# Search engines index LinkedIn posts days late, and hiring posts stay
+# open for weeks. The watcher sends each post once, so a long window is fine.
+POST_MIN_WINDOW_DAYS = 14
 
-ALL_ENGINES = ["linkedin", "yahoo", "duckduckgo", "bing", "google"]
+# linkedin_posts = LinkedIn's own post search (logged-in Chrome, Mac only).
+# yahoo/duckduckgo/bing/google find posts through search engines (few, old).
+ALL_ENGINES = ["linkedin", "linkedin_posts", "yahoo", "duckduckgo", "bing", "google"]
 
 
 def run_scraper_with_progress(
@@ -1564,13 +1713,15 @@ def run_scraper_with_progress(
     engines: list[str] = None,
     custom_queries: Optional[list[str]] = None,
     enrich: bool = True,
-    enrich_limit: int = 40,
+    enrich_limit: int = 100,
     post_enrich_limit: int = 30,
     locations: Optional[list[str]] = None,
     contract_only: bool = False,
     exclude_sponsorship: bool = True,
     exclude_countries: Optional[list[str]] = None,
     max_job_age_days: Optional[float] = None,
+    region_only: bool = True,
+    top_markets_only: bool = False,
 ) -> list[Opportunity]:
     """Multi-tech, multi-engine scraper with live progress callbacks.
 
@@ -1589,6 +1740,9 @@ def run_scraper_with_progress(
         exclude_countries: drop jobs located in these countries (e.g. ["Brazil"]).
         max_job_age_days: drop jobs FIRST posted more than this many days ago
                    (true age from the job ID; catches old jobs reposted as new).
+        region_only: keep only jobs in LATAM or open worldwide / to LATAM.
+        top_markets_only: keep only jobs from US / Canada / Europe companies,
+                   and only real React Native / Expo roles (strict tech match).
     """
     from tech_profiles import TECH_PROFILES
 
@@ -1605,6 +1759,7 @@ def run_scraper_with_progress(
     # Merge queries and keywords from all selected profiles
     all_job_queries = []
     all_post_queries = []
+    all_linkedin_post_queries = []
     all_filter_keywords = []
     all_scoring_signals = {}
     tech_labels = []
@@ -1616,6 +1771,7 @@ def run_scraper_with_progress(
         tech_labels.append(profile["label"])
         all_job_queries.extend(profile["job_queries"])
         all_post_queries.extend(profile["post_queries"])
+        all_linkedin_post_queries.extend(profile.get("linkedin_post_queries", profile["post_queries"][:5]))
         all_filter_keywords.extend(profile["filter_keywords"])
         all_scoring_signals.update(profile["scoring_signals"])
 
@@ -1638,6 +1794,41 @@ def run_scraper_with_progress(
             phases.append((f"LinkedIn Jobs · {loc}", job_queries[:10],
                            lambda s, q, loc=loc: scrape_linkedin_jobs_page(
                                s, q, time_range=time_range, location=loc, contract_only=contract_only)))
+    post_browser = {}  # one logged-in Chrome for all LinkedIn post searches
+
+    def scrape_linkedin_posts(s, q):
+        import linkedin_posts
+        if "search" not in post_browser:
+            ok, reason = linkedin_posts.is_available()
+            if not ok:
+                log.warning("Skipping LinkedIn post search: %s", reason)
+                post_browser["search"] = None
+                return []
+            try:
+                post_browser["search"] = linkedin_posts.LinkedInPostSearch().__enter__()
+            except Exception as e:
+                log.error("Skipping LinkedIn post search: %s", e)
+                post_browser["search"] = None
+                return []
+        search = post_browser["search"]
+        if search is None:
+            return []
+        if post_browser.get("used"):
+            search.pause_between_searches()
+        post_browser["used"] = True
+        try:
+            return linkedin_posts_to_opportunities(search.search(q), q)
+        except linkedin_posts.NotLoggedIn as e:
+            log.error("%s", e)
+            search.__exit__(None, None, None)
+            post_browser["search"] = None
+            return []
+        except Exception as e:  # one broken search must not kill the run
+            log.warning("LinkedIn post search failed for %r: %s", q, e)
+            return []
+
+    if "linkedin_posts" in selected_engines:
+        phases.append(("LinkedIn Posts", list(dict.fromkeys(all_linkedin_post_queries)), scrape_linkedin_posts))
     if "yahoo" in selected_engines:
         phases.append(("Yahoo Posts", post_queries,
                         lambda s, q: scrape_yahoo_for_linkedin_posts(s, q, time_range=time_range)))
@@ -1667,6 +1858,20 @@ def run_scraper_with_progress(
     cb({"step": "Scraping", "total_phases": total_phases,
         "log_line": f"Starting scraper: {tech_str} | Engines: {engine_str} | Range: {time_range}{focus_str}"})
 
+    try:
+        _run_phases(phases, session, all_results, cb, total_phases)
+    finally:
+        if post_browser.get("search"):
+            post_browser["search"].__exit__(None, None, None)
+
+    return _filter_and_rank(
+        all_results, cb, total_phases, session, enrich, enrich_limit, post_enrich_limit,
+        exclude_countries, max_job_age_days, max_age_days, exclude_sponsorship, all_scoring_signals,
+        selected_techs, custom_queries, all_filter_keywords, region_only, contract_only, max_results,
+        top_markets_only)
+
+
+def _run_phases(phases, session, all_results, cb, total_phases):
     for phase_idx, (phase_name, queries, scrape_fn) in enumerate(phases, 1):
         cb({
             "phase": phase_name,
@@ -1698,6 +1903,13 @@ def run_scraper_with_progress(
 
         cb({"log_line": f"  Phase complete: {phase_found} results"})
 
+
+def _filter_and_rank(
+    all_results, cb, total_phases, session, enrich, enrich_limit, post_enrich_limit,
+    exclude_countries, max_job_age_days, max_age_days, exclude_sponsorship, all_scoring_signals,
+    selected_techs, custom_queries, all_filter_keywords, region_only, contract_only, max_results,
+    top_markets_only=False,
+) -> list[Opportunity]:
     # Filtering pipeline
     cb({"step": "Filtering", "phase": "Filtering", "phase_num": total_phases + 1,
         "total_phases": total_phases + 1,
@@ -1743,7 +1955,7 @@ def run_scraper_with_progress(
                 "log_line": f"Fetching details for {n_jobs} LinkedIn jobs..."})
             done = enrich_linkedin_jobs(session, pipeline, enrich_limit)
             cb({"log_line": f"  Enriched {done}/{n_jobs} jobs"})
-        n_posts = min(post_enrich_limit, sum(1 for o in pipeline if o.result_type == ResultType.POST))
+        n_posts = min(post_enrich_limit, sum(1 for o in pipeline if o.result_type == ResultType.POST and not o.description))
         if n_posts:
             cb({"step": "Enriching", "phase": "Reading posts",
                 "log_line": f"Reading full text of {n_posts} posts..."})
@@ -1751,11 +1963,22 @@ def run_scraper_with_progress(
             cb({"log_line": f"  Read {done}/{n_posts} posts"})
 
         pipeline = filter_posts_not_remote(pipeline)
-        pipeline = filter_india_posts(pipeline)
-        cb({"log_line": f"  After post checks (full text): {len(pipeline)}"})
+        pipeline = filter_post_intent(pipeline)
+        pipeline = filter_india_full_text(pipeline)
+        cb({"log_line": f"  After full-text checks (remote, hiring posts, India): {len(pipeline)}"})
 
-    pipeline = filter_tech_relevance(pipeline, all_filter_keywords)
-    cb({"log_line": f"  After tech filter: {len(pipeline)}"})
+    rn_only = selected_techs == ["react_native"] and not custom_queries
+    pipeline = filter_tech_relevance(pipeline, all_filter_keywords, rn_only=rn_only,
+                                     strict=top_markets_only)
+    cb({"log_line": f"  After tech filter{' (React Native/Expo in the text)' if rn_only else ''}: {len(pipeline)}"})
+
+    if region_only:
+        pipeline = filter_region(pipeline)
+        cb({"log_line": f"  After region filter (LATAM / worldwide): {len(pipeline)}"})
+
+    if top_markets_only:
+        pipeline = filter_top_markets(pipeline)
+        cb({"log_line": f"  After top-markets filter (US / Canada / Europe company): {len(pipeline)}"})
 
     if exclude_sponsorship:
         pipeline = filter_sponsorship(pipeline)
@@ -1772,6 +1995,9 @@ def run_scraper_with_progress(
         "log_line": f"Ranking {len(pipeline)} results..."})
 
     pipeline = rank_opportunities(pipeline, extra_signals=all_scoring_signals)
+
+    if top_markets_only:
+        pipeline = limit_per_company(pipeline, limit=1)
 
     if max_results and len(pipeline) > max_results:
         pipeline = pipeline[:max_results]
@@ -2006,6 +2232,16 @@ def main():
         help="Keep jobs that need local work authorization or visa sponsorship",
     )
     parser.add_argument(
+        "--any-region",
+        action="store_true",
+        help="Keep jobs pinned to one foreign country (default: only LATAM / worldwide)",
+    )
+    parser.add_argument(
+        "--top-markets",
+        action="store_true",
+        help="Only US / Canada / Europe companies, and only real React Native / Expo roles",
+    )
+    parser.add_argument(
         "--no-enrich",
         action="store_true",
         help="Skip fetching job detail pages (faster, less accurate)",
@@ -2029,6 +2265,8 @@ def main():
         exclude_sponsorship=not args.allow_sponsorship,
         exclude_countries=[x.strip() for x in args.exclude_countries.split(",") if x.strip()],
         max_job_age_days=args.max_job_age_days,
+        region_only=not args.any_region,
+        top_markets_only=args.top_markets,
     )
 
     # Format output

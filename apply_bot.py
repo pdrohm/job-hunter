@@ -293,7 +293,8 @@ def chrome_running(cfg: Config) -> bool:
 def close_chrome(cfg: Config):
     """Quit the bot's Chrome (only that one: matched by its own profile dir)."""
     profile_dir = cfg.home / "chrome-profile"
-    subprocess.run(["pkill", "-f", f"--user-data-dir={profile_dir}"],
+    # "--" ends pkill's options: the pattern itself starts with "--"
+    subprocess.run(["pkill", "-f", "--", f"--user-data-dir={profile_dir}"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 

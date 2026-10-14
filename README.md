@@ -16,11 +16,29 @@ Try it without sending: `python watcher.py --dry-run`. One run only: `python wat
 By default the watcher:
 - searches LinkedIn jobs in `Worldwide`, `Latin America` and `Brazil` (`WATCH_LOCATIONS`);
 - drops jobs that need US/UK/EU work authorization, citizenship, a clearance or visa sponsorship (rules in `focus.py`; turn off with `WATCH_ALLOW_SPONSORSHIP=true`);
-- ranks higher jobs open to people abroad (worldwide, LATAM, contractor, B2B, PJ, Deel) and lower remote jobs pinned to one foreign country.
+- ranks higher jobs open to people abroad (worldwide, LATAM, contractor, B2B, PJ, Deel) and lower remote jobs pinned to one foreign country;
+- keeps only React Native / Expo roles: the words must be in the job's title, or be the main stack in its own text (a "React Native is a plus" web job fails);
+- keeps only jobs in LATAM, listed as worldwide, or whose text says LATAM / worldwide people can apply (turn off with `WATCH_ANY_REGION=true`);
+- keeps only US / Canada / Europe companies (or agencies for their clients): the job is listed there, or its text says where the company is based, its time zone or that it pays in USD/EUR. Spanish / Portuguese jobs from local companies are dropped, and you get at most 1 job per company per run (turn off with `WATCH_TOP_MARKETS_ONLY=false`: then a mobile role on a React/TypeScript stack also counts).
 
 Set `WATCH_CONTRACT_ONLY=true` to get only contractor / freelance / B2B work.
 
-LinkedIn posts come from Yahoo search (`yahoo` engine), and the bot reads each post's full text before it filters.
+## LinkedIn posts (on your Mac)
+
+Posts come from LinkedIn's own post search (`linkedin_posts` engine): posts from
+the last 24 hours, newest first. That search needs a logged-in account, so it runs
+in a separate Chrome on your Mac, not on GitHub (GitHub sends jobs only).
+
+1. `.venv/bin/pip install -r requirements-posts.txt`
+2. `.venv/bin/python linkedin_posts.py --login` and log in to LinkedIn in the Chrome that opens (once).
+3. Test: `WATCH_ENGINES=linkedin_posts .venv/bin/python watcher.py --dry-run`
+4. Run it every 2 hours: `sh scripts/install_posts_watcher_mac.sh`
+
+The bot reads each post, drops people looking for work (#opentowork), and keeps
+remote React Native / Expo hiring posts with no India. To keep the account safe it
+does 6 searches per run with pauses, and only reads (the one click per post is
+"Copy link to post", because the page has no post links).
+Search engines (`yahoo` engine: Yahoo + Bing) still work, but they find few, old posts.
 
 ## Apply bot (Telegram → Claude Code on your Mac)
 

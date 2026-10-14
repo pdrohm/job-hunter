@@ -168,6 +168,200 @@ def looks_country_only(location: str, text: str) -> bool:
 
 
 # ─────────────────────────────────────────────
+# Region: keep only remote jobs open worldwide or to LATAM
+# ─────────────────────────────────────────────
+
+LATAM_PLACES = [
+    "argentina", "bolivia", "brazil", "brasil", "chile", "colombia", "costa rica", "cuba",
+    "dominican republic", "república dominicana", "ecuador", "el salvador", "guatemala",
+    "honduras", "mexico", "méxico", "nicaragua", "panama", "panamá", "paraguay", "peru",
+    "perú", "puerto rico", "uruguay", "venezuela",
+    # Metro areas LinkedIn shows without the country
+    "buenos aires", "bogotá", "bogota", "medellín", "medellin", "santiago metropolitan",
+    "lima", "montevideo", "guadalajara", "monterrey", "quito", "asunción", "asuncion",
+    "belize", "guyana", "suriname", "jamaica", "caribbean",
+]
+# "New Mexico" is a US state, not Mexico
+_LATAM_PLACE_RE = re.compile(
+    r"(?<!\w)(?<!new\s)(?:" + "|".join(re.escape(p) for p in LATAM_PLACES) + r")(?!\w)",
+    re.IGNORECASE,
+)
+
+# LinkedIn locations that are a region, not one country
+_OPEN_LOCATION_RE = re.compile(
+    r"^(?:worldwide|remote|anywhere|global|earth|emea\s*&?\s*latam|"
+    r"latin\s+america|latam|south\s+america|central\s+america|the\s+americas|americas)$",
+    re.IGNORECASE,
+)
+
+# Text that says people outside the hiring country can apply. Stricter than
+# _OPEN_ABROAD_RE: words like "global" or "international" alone are company
+# boilerplate ("a global leader"), not a hiring rule.
+_OPEN_TO_REGION_RE = re.compile(
+    r"\b(?:worldwide|(?:work|remote|hire|hiring|apply|candidates?)\s+from\s+anywhere|"
+    r"anywhere\s+in\s+the\s+world|latam|latin\s+america|south\s+america|central\s+america|"
+    r"(?:any|all)\s+time\s*zones?|international\s+(?:candidates|applicants|contractors|talent)|"
+    r"outside\s+(?:of\s+)?(?:the\s+)?u\.?s\.?a?\b|nearshore|globally\s+remote|remote[\s-]+global|"
+    r"fully\s+distributed|the\s+americas)\b",
+    re.IGNORECASE,
+)
+
+
+def is_latam_location(location: str) -> bool:
+    return bool(_LATAM_PLACE_RE.search(location or ""))
+
+
+def mentions_open_region(text: str) -> bool:
+    """Text says the job hires worldwide or in LATAM."""
+    text = text or ""
+    return bool(_OPEN_TO_REGION_RE.search(text) or _LATAM_PLACE_RE.search(text))
+
+
+def region_ok(location: str, text: str) -> bool:
+    """Job is in LATAM, listed as worldwide/regional, or its text says
+    people abroad (worldwide or LATAM) can apply."""
+    loc = (location or "").strip()
+    if not loc or loc.lower() == "not specified" or _OPEN_LOCATION_RE.match(loc):
+        return True
+    if is_latam_location(loc):
+        return True
+    return mentions_open_region(text)
+
+
+# ─────────────────────────────────────────────
+# Tech: React Native / Expo mobile only
+# ─────────────────────────────────────────────
+
+_RN_CORE_RE = re.compile(r"react[\s-]?native|(?<!\w)reactnative(?!\w)|(?<![\w.])expo(?!\w)", re.IGNORECASE)
+_MOBILE_TITLE_RE = re.compile(
+    r"\b(?:mobile|app)\s+(?:developer|engineer|dev|lead|architect)\b|\bmobile\b", re.IGNORECASE
+)
+_JS_STACK_RE = re.compile(r"\b(?:react|javascript|typescript)\b", re.IGNORECASE)
+
+
+def is_rn_match(title: str, text: str, strict: bool = False) -> bool:
+    """React Native / Expo role. Also a mobile role on a JS/TS stack
+    ("or something similar"); native-only Swift/Kotlin roles don't count.
+
+    strict: React Native / Expo must be the job, not a side note. It is in
+    the title, or the title is a mobile role and the text names it, or the
+    text names it at least twice ("React Native is a plus" on a web job fails)."""
+    if not strict:
+        if _RN_CORE_RE.search(f"{title or ''} {text or ''}"):
+            return True
+        return bool(_MOBILE_TITLE_RE.search(title or "") and _JS_STACK_RE.search(text or ""))
+    if _RN_CORE_RE.search(title or ""):
+        return True
+    hits = len(_RN_CORE_RE.findall(text or ""))
+    return hits >= 2 or (hits == 1 and bool(_MOBILE_TITLE_RE.search(title or "")))
+
+
+# ─────────────────────────────────────────────
+# Top markets: a US / Canada / Europe company that hires in LATAM
+# ─────────────────────────────────────────────
+
+TOP_MARKET_PLACES = [
+    "united states", "usa", "canada", "united kingdom", "england", "scotland", "ireland",
+    "germany", "netherlands", "france", "spain", "portugal", "italy", "belgium", "luxembourg",
+    "switzerland", "austria", "sweden", "norway", "denmark", "finland", "iceland", "poland",
+    "czechia", "czech republic", "estonia", "lithuania", "latvia", "european union", "europe",
+    "emea", "north america",
+    # Metro areas LinkedIn shows without the country
+    "san francisco", "bay area", "new york", "los angeles", "seattle", "boston", "austin",
+    "chicago", "miami", "toronto", "vancouver", "montreal", "london", "berlin", "amsterdam",
+    "paris", "dublin", "lisbon", "barcelona", "madrid", "stockholm", "zurich", "munich",
+]
+_TOP_MARKET_PLACE_RE = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(p) for p in TOP_MARKET_PLACES) + r")(?!\w)"
+    r"|,\s*(?-i:[A-Z]{2})$",  # "Austin, TX": US state code
+    re.IGNORECASE,
+)
+
+# Text that shows the company or its clients are in a top market:
+# where it is based, its time zones, or the currency it pays in.
+_TOP_MARKET_SIGNAL_RE = re.compile(
+    r"\b(?:u\.?s\.?|us|american|canadian|european|uk|british|german|dutch|swiss|nordic)[\s-]+"
+    r"(?:based|headquartered|company|companies|clients?|customers?|startups?|teams?|hours|time\s*zones?)\b|"
+    r"\b(?:based|headquartered|hq|offices?)\s+in\s+(?:the\s+)?(?:u\.?s\.?a?|united\s+states|"
+    r"canada|europe|uk|united\s+kingdom|" + "|".join(re.escape(p) for p in TOP_MARKET_PLACES) + r")\b|"
+    r"\b(?:north\s+america|silicon\s+valley|y\s?combinator|yc\s?[swfx]\d{2})\b|"
+    # Not GMT/UTC: "UTC-3" is Brazil time. Bare ET/PT/CT are too common as words.
+    r"\b(?:est|edt|pst|pdt|cst|cdt|mst|cet|cest|bst)\b|\b(?:et|pt|ct)\s+(?:time|hours|overlap)\b|"
+    r"\b(?:eastern|pacific|central|mountain)\s+(?:standard\s+)?time\b|"
+    r"\b(?:usd|eur|gbp|cad|us\s+dollars?|euros?)\b|[$€£]\s?\d",
+    re.IGNORECASE,
+)
+
+# Words that only show up in Spanish job posts (a local LATAM company)
+_SPANISH_HINTS = re.compile(
+    r"\b(?:buscamos|estamos\s+buscando|empresa|experiencia|requisitos|beneficios|"
+    r"ofrecemos|desarrollador(?:a)?|conocimientos|trabajo|sueldo|postúlate|postulate|vacante)\b",
+    re.IGNORECASE,
+)
+
+
+def is_top_market_location(location: str) -> bool:
+    return bool(_TOP_MARKET_PLACE_RE.search((location or "").strip()))
+
+
+def looks_spanish(text: str, min_hits: int = 3) -> bool:
+    return len(_SPANISH_HINTS.findall(text or "")) >= min_hits
+
+
+def top_market_signal(text: str) -> str:
+    """The first words that tie the job to a US / Canada / Europe company, or ''."""
+    m = _TOP_MARKET_SIGNAL_RE.search(text or "")
+    return m.group(0) if m else ""
+
+
+def is_top_market_job(location: str, text: str) -> bool:
+    """Job from a US / Canada / Europe company (or for its clients).
+
+    A job listed in a top-market country passes (the region filter checks
+    that LATAM can apply). A job listed in LATAM or worldwide needs a sign in
+    the text: where the company is based, its time zone, or its currency.
+    Spanish or Portuguese text means a local company: it fails."""
+    if is_top_market_location(location):
+        return True
+    if looks_spanish(text) or looks_portuguese(text):
+        return False
+    return bool(top_market_signal(text))
+
+
+# ─────────────────────────────────────────────
+# Posts: a company hiring, not a person looking for work
+# ─────────────────────────────────────────────
+
+_JOB_SEEKER_RE = re.compile(
+    r"#?open\s?to\s?work\b|#lookingforwork|#jobseeker|#lookingforjob|"
+    r"\bi['’]?\s?a?m\s+(?:currently\s+|actively\s+)?(?:exploring|looking\s+for|seeking|open\s+to)\s+"
+    r"(?:new\s+)?(?:\w+\s+){0,4}(?:opportunit|roles?\b|jobs?\b|positions?\b|challenge)|"
+    r"\b(?:open\s+to\s+new|seeking\s+new|exploring\s+new)\s+(?:opportunities|roles)\b|"
+    r"\bavailable\s+for\s+(?:new\s+)?(?:opportunities|hire|work|freelance)",
+    re.IGNORECASE,
+)
+
+_HIRING_INTENT_RE = re.compile(
+    r"\bhiring\b|\bwe['’]?re\s+looking\b|\bwe\s+are\s+(?:looking|searching|seeking|growing)\b|"
+    r"\blooking\s+for\s+(?:a|an|two|three|\d+|experienced|senior|talented)\b|\bjoin\s+(?:our|the|us)\b|"
+    r"\bopen\s+(?:role|position|vacanc)|\bjob\s+opening|\bposition\s+available|\bapply\b|"
+    r"\bsend\s+(?:me\s+)?(?:your\s+)?(?:cv|resume)|\bvagas?\b|\bcontratando\b|\bbuscamos\b|"
+    r"\bestamos\s+(?:buscando|procurando|contratando)\b|\bvacantes?\b|\bstiamo\s+cercando\b|"
+    r"\brecrutando\b|\bseeking\s+(?:a|an)\b|\bopportunity\b",
+    re.IGNORECASE,
+)
+
+
+def is_job_seeker_post(text: str) -> bool:
+    """Post by a person looking for work (#opentowork), not a job."""
+    return bool(_JOB_SEEKER_RE.search(text or ""))
+
+
+def has_hiring_intent(text: str) -> bool:
+    return bool(_HIRING_INTENT_RE.search(text or ""))
+
+
+# ─────────────────────────────────────────────
 # Excluded countries (e.g. skip local Brazilian jobs for now)
 # ─────────────────────────────────────────────
 

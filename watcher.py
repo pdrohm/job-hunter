@@ -11,11 +11,17 @@ Usage:
 Config (environment variables or .env):
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   required (see notifier.py)
     WATCH_TECHS              comma-separated tech IDs   (default: react_native)
-    WATCH_ENGINES            comma-separated engines    (default: linkedin,yahoo)
+    WATCH_ENGINES            comma-separated engines    (default: linkedin,linkedin_posts)
+                             linkedin_posts needs a logged-in Chrome on the Mac
+                             (python linkedin_posts.py --login); skipped elsewhere
     WATCH_LOCATIONS          LinkedIn search locations  (default: Worldwide,Latin America,Brazil)
     WATCH_CONTRACT_ONLY      true = only contractor/B2B (default: false)
     WATCH_ALLOW_SPONSORSHIP  true = keep jobs needing work authorization (default: false)
     WATCH_EXCLUDE_COUNTRIES  comma-separated countries to skip, e.g. Brazil (default: none)
+    WATCH_ANY_REGION         true = keep jobs pinned to one foreign country (default: false,
+                             only jobs in LATAM or open worldwide / to LATAM)
+    WATCH_TOP_MARKETS_ONLY   true = only US / Canada / Europe companies hiring LATAM, and
+                             only real React Native / Expo roles (default: true)
     WATCH_MAX_JOB_AGE_DAYS   drop jobs FIRST posted more than N days ago (default: 7)
     WATCH_TIME_RANGE         24h, 3d, 1w, ...           (default: 24h)
     WATCH_INTERVAL_MINUTES   minutes between runs       (default: 120)
@@ -120,12 +126,14 @@ def run_once(dry_run: bool = False, seed: bool = False) -> int:
         time_range=_env("WATCH_TIME_RANGE", "24h"),
         on_progress=lambda e: log.info(e["log_line"]) if "log_line" in e else None,
         techs=_env_list("WATCH_TECHS", "react_native"),
-        engines=_env_list("WATCH_ENGINES", "linkedin,yahoo"),
+        engines=_env_list("WATCH_ENGINES", "linkedin,linkedin_posts"),
         locations=_env_list("WATCH_LOCATIONS", "Worldwide,Latin America,Brazil"),
         contract_only=_env_bool("WATCH_CONTRACT_ONLY", False),
         exclude_sponsorship=not _env_bool("WATCH_ALLOW_SPONSORSHIP", False),
         exclude_countries=_env_list("WATCH_EXCLUDE_COUNTRIES", ""),
         max_job_age_days=float(_env("WATCH_MAX_JOB_AGE_DAYS", "7")),
+        region_only=not _env_bool("WATCH_ANY_REGION", False),
+        top_markets_only=_env_bool("WATCH_TOP_MARKETS_ONLY", True),
     )
 
     store = SeenStore(_data_dir() / "seen_jobs.json")

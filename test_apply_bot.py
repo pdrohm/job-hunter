@@ -295,6 +295,13 @@ with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"
     bot.app = None
 
 
+with mock.patch("apply_bot.subprocess.run") as run:
+    apply_bot.close_chrome(cfg)
+    args = run.call_args.args[0]
+test("pkill pattern is not read as an option", args[:3] == ["pkill", "-f", "--"], str(args))
+test("pkill only targets the bot's Chrome profile", args[3] == f"--user-data-dir={cfg.home / 'chrome-profile'}")
+
+
 # ─────────────────────────────────────────────
 print("\n━━━ Memory Tests ━━━")
 

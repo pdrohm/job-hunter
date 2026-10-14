@@ -11,7 +11,12 @@ from rn_linkedin_scraper import (
     Opportunity,
     ResultType,
     filter_contract,
-    filter_india_posts,
+    filter_india_full_text,
+    filter_post_intent,
+    filter_region,
+    filter_tech_relevance,
+    filter_top_markets,
+    limit_per_company,
     filter_posts_not_remote,
     filter_sponsorship,
     rank_opportunities,
@@ -145,9 +150,9 @@ test("Empty list keeps all", len(filter_excluded_countries(opps, [])) == 4)
 # Same job posted in Brazil and Argentina: the Argentina copy must survive
 from unittest import mock as _mock
 import rn_linkedin_scraper as rls
-br = make_opp(title="RN Dev", company_or_author="Acme", location="Brazil",
+br = make_opp(title="React Native Dev", company_or_author="Acme", location="Brazil",
               url="https://www.linkedin.com/jobs/view/1111111111/", job_id="1111111111", source="linkedin_jobs")
-ar = make_opp(title="RN Dev", company_or_author="Acme", location="Buenos Aires, Argentina",
+ar = make_opp(title="React Native Dev", company_or_author="Acme", location="Buenos Aires, Argentina",
               url="https://www.linkedin.com/jobs/view/2222222222/", job_id="2222222222", source="linkedin_jobs")
 with _mock.patch.object(rls, "scrape_linkedin_jobs_page", return_value=[br, ar]), \
         _mock.patch.object(rls, "time"):
@@ -183,6 +188,10 @@ posts = [
     make_opp(title="Post C", result_type=ResultType.POST, url="https://www.linkedin.com/posts/c",
              description="Hiring RN dev, office only."),
 ]
+from rn_linkedin_scraper import is_onsite_or_hybrid
+test("Spanish/Portuguese hybrid and onsite caught",
+     is_onsite_or_hybrid("Desarrollador Fullstack - HIBRIDO") and is_onsite_or_hybrid("Vaga presencial em SP")
+     and not is_onsite_or_hybrid("100% remoto"))
 kept = filter_posts_not_remote(posts)
 test("Posts need remote, no hybrid", [o.title for o in kept] == ["Post A"], str([o.title for o in kept]))
 
@@ -192,8 +201,123 @@ posts = [
     make_opp(title="Post B", result_type=ResultType.POST, url="https://www.linkedin.com/posts/b",
              description="Remote RN role, LATAM."),
 ]
-kept = filter_india_posts(posts)
+posts.append(make_opp(title="Post C", result_type=ResultType.POST, url="https://www.linkedin.com/posts/c",
+                      description="Join NeuSpaarX Technologies Pvt. Ltd. Remote RN role."))
+kept = filter_india_full_text(posts)
 test("India recruiter phrases dropped", [o.title for o in kept] == ["Post B"], str([o.title for o in kept]))
+
+import rn_linkedin_scraper as _rls
+_opps = _rls.linkedin_posts_to_opportunities([{
+    "url": "https://www.linkedin.com/posts/abc_hiring-share-7515472611372556289-zVSJ/",
+    "text": "We are hiring a React Native dev\nRemote, LATAM. Contractor.", "author": "Jane Doe",
+}], "q")
+test("LinkedIn post → Opportunity", _opps[0].title == "We are hiring a React Native dev"
+     and _opps[0].company_or_author == "Jane Doe" and _opps[0].posted_at.startswith("2026")
+     and _opps[0].open_abroad and _opps[0].contractor and _opps[0].source == "linkedin_posts",
+     str(_opps[0]))
+
+posts = [
+    make_opp(title="#opentowork #reactnative", result_type=ResultType.POST, url="https://www.linkedin.com/posts/s",
+             description="Open to Work | Senior React Native Engineer | Remote. I'm currently exploring opportunities."),
+    make_opp(title="#hiring #reactnative", result_type=ResultType.POST, url="https://www.linkedin.com/posts/h",
+             description="We are hiring: React Native Developer, full remote."),
+    make_opp(title="Post", result_type=ResultType.POST, url="https://www.linkedin.com/posts/t",
+             description="5 tips for React Native performance."),
+    make_opp(title="Intern", result_type=ResultType.POST, url="https://www.linkedin.com/posts/i",
+             description="We're looking for React Native Mobile Developer Interns. Remote."),
+    make_opp(title="Job", description="React Native role"),
+]
+from focus import is_job_seeker_post
+test("Job seeker phrases (curly apostrophe too)",
+     is_job_seeker_post("I’m open to new opportunities! I’m currently exploring Senior roles")
+     and is_job_seeker_post("Hi everyone! I'm looking for my next role")
+     and is_job_seeker_post("Now, I’m looking for my next big challenge!")
+     and not is_job_seeker_post("Misaq is hiring a Senior React Native Developer"))
+kept = [o.title for o in filter_post_intent(posts)]
+test("Post intent: hiring kept, opentowork and tips dropped, jobs untouched",
+     kept == ["#hiring #reactnative", "Job"], str(kept))
+
+jobs = [
+    make_opp(title="Job A", location="Worldwide", description="Remote team. Based in India, Bengaluru office."),
+    make_opp(title="Job B", location="Worldwide", description="Remote team with offices in US and India."),
+]
+kept = filter_india_full_text(jobs)
+test("Job 'based in India' dropped, India office kept", [o.title for o in kept] == ["Job B"],
+     str([o.title for o in kept]))
+
+opps = [
+    make_opp(title="Senior React Native Engineer", snippet="", description=""),
+    make_opp(title="Mobile Developer", description="We use Expo and TypeScript."),
+    make_opp(title="Mobile Engineer (iOS & Android)", description="Stack: React, TypeScript, GraphQL."),
+    make_opp(title="iOS Engineer", description="Swift and SwiftUI only."),
+    make_opp(title="Multiplayer Game Programmer (Unity / C#)", source="linkedin_jobs",
+             source_query='"react native" developer remote', description="Unity, C#, Photon."),
+    make_opp(title="Senior Frontend Developer", description="React, Next.js, Tailwind."),
+    make_opp(title="Post", result_type=ResultType.POST, url="https://www.linkedin.com/posts/x",
+             description="#hiring #reactnative #remote"),
+]
+for o in opps[1:]:
+    o.snippet = ""
+kept = [o.title for o in filter_tech_relevance(opps, [], rn_only=True)]
+test("RN filter keeps RN/Expo/JS-mobile, drops native, Unity, web",
+     kept == ["Senior React Native Engineer", "Mobile Developer", "Mobile Engineer (iOS & Android)", "Post"],
+     str(kept))
+
+opps = [
+    make_opp(title="A", location="Buenos Aires, Argentina"),
+    make_opp(title="B", location="Latin America"),
+    make_opp(title="C", location="Worldwide"),
+    make_opp(title="D", location="London, England, United Kingdom", description="Hybrid-free, UK team."),
+    make_opp(title="E", location="United Kingdom", description="100% remote - Worldwide"),
+    make_opp(title="F", location="United States", description="Open to contractors in LATAM."),
+    make_opp(title="G", location="Albuquerque, New Mexico, United States"),
+    make_opp(title="H", location="Rome, Latium, Italy", description="A global leader in banking."),
+    make_opp(title="I", location="Germany", open_abroad=True),
+    make_opp(title="J", location="Mexico City Metropolitan Area"),
+    make_opp(title="Post", result_type=ResultType.POST, url="https://www.linkedin.com/posts/y", location="Not specified"),
+]
+kept = [o.title for o in filter_region(opps)]
+test("Region filter keeps LATAM/worldwide only", kept == ["A", "B", "C", "E", "F", "I", "J", "Post"], str(kept))
+
+opps = [
+    make_opp(title="Senior React Native Engineer", description=""),
+    make_opp(title="Mobile Engineer", description="Our app is built with Expo."),
+    make_opp(title="Mobile Engineer (iOS & Android)", description="Stack: React, TypeScript, GraphQL."),
+    make_opp(title="Frontend Engineer", description="React, Next.js. React Native is a plus."),
+    make_opp(title="Software Engineer", description="Ship our React Native app. Expo, EAS, TypeScript."),
+]
+for o in opps:
+    o.snippet = ""
+kept = [o.title for o in filter_tech_relevance(opps, [], rn_only=True, strict=True)]
+test("Strict RN filter: RN must be the job, not a side note",
+     kept == ["Senior React Native Engineer", "Mobile Engineer", "Software Engineer"], str(kept))
+
+opps = [
+    make_opp(title="A", location="United States", description="Open to contractors in LATAM."),
+    make_opp(title="B", location="Austin, TX", description="Remote, worldwide."),
+    make_opp(title="C", location="Latin America", description="US-based startup, 4h overlap with EST."),
+    make_opp(title="D", location="Latin America", description="Remote role, paid in USD via Deel."),
+    make_opp(title="E", location="Argentina", description="Remote React Native role."),
+    make_opp(title="F", location="Mexico City Metropolitan Area",
+             description="Buscamos desarrollador React Native con experiencia. Ofrecemos beneficios."),
+    make_opp(title="G", location="Worldwide", description="We are a fintech based in London."),
+    make_opp(title="H", location="Colombia", description="UTC-5 time zone, remote team."),
+    make_opp(title="Post US", result_type=ResultType.POST, url="https://www.linkedin.com/posts/a",
+             description="#hiring React Native dev, LATAM welcome, PST overlap"),
+    make_opp(title="Post local", result_type=ResultType.POST, url="https://www.linkedin.com/posts/b",
+             description="#hiring React Native dev, remote LATAM"),
+]
+kept = [o.title for o in filter_top_markets(opps)]
+test("Top-markets filter keeps US/Canada/Europe companies, drops local LATAM",
+     kept == ["A", "B", "C", "D", "G", "Post US"], str(kept))
+
+opps = [
+    make_opp(title="A", company_or_author="BairesDev"),
+    make_opp(title="B", company_or_author="Acme"),
+    make_opp(title="C", company_or_author="bairesdev "),
+]
+kept = [o.title for o in limit_per_company(opps, limit=1)]
+test("One result per company (best first)", kept == ["A", "B"], str(kept))
 
 ranked = rank_opportunities([
     make_opp(title="React Native Developer", location="United States", snippet="React Native role"),

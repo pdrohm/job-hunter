@@ -1,0 +1,2 @@
+# Mac only: LinkedIn post search drives a logged-in Chrome (linkedin_posts.py)
+playwright==1.63.0

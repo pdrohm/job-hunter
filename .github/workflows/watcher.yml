@@ -54,9 +54,11 @@ jobs:
           WATCH_TECHS: ${{ vars.WATCH_TECHS }}
           WATCH_LOCATIONS: ${{ vars.WATCH_LOCATIONS }}
           WATCH_EXCLUDE_COUNTRIES: ${{ vars.WATCH_EXCLUDE_COUNTRIES }}
+          WATCH_TOP_MARKETS_ONLY: ${{ vars.WATCH_TOP_MARKETS_ONLY }}
           WATCH_MAX_JOB_AGE_DAYS: ${{ vars.WATCH_MAX_JOB_AGE_DAYS }}
           WATCH_TIME_RANGE: ${{ vars.WATCH_TIME_RANGE }}
-          WATCH_ENGINES: ${{ vars.WATCH_ENGINES }}
+          # Jobs only: LinkedIn post search needs a logged-in Chrome (runs on the Mac)
+          WATCH_ENGINES: ${{ vars.WATCH_ENGINES || 'linkedin' }}
           WATCH_MAX_PER_RUN: ${{ vars.WATCH_MAX_PER_RUN }}
           SEEN_CACHE_KEY: ${{ steps.seen.outputs.cache-matched-key }}
         run: |

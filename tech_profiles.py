@@ -19,20 +19,41 @@ TECH_PROFILES = {
             'expo "react native" remote',
             '"mobile engineer" "react native" remote',
         ],
+        # LinkedIn's own post search (logged in, last 24h). Few queries on
+        # purpose: each one reads ~25 posts, and fewer searches = safer account.
+        "linkedin_post_queries": [
+            '"react native" hiring',
+            '"react native" remote',
+            '"react native" (vaga OR vacante OR contratando)',
+            '"react native" (latam OR "latin america")',
+            '"expo" "react native"',
+            '#reactnative #hiring',
+        ],
+        # Search engines return ~7 hits per query, mostly old, so many
+        # different phrasings are what finds the few fresh posts.
         "post_queries": [
             '"react native" hiring remote',
             '"react native" we are hiring remote',
             '"react native" developer remote',
             '"react native" open role remote',
             '"react native" remote opportunity',
+            '"react native" looking for remote',
             '"expo" "react native" mobile remote',
+            'expo developer hiring remote',
+            'hiring react native engineer',
+            'senior react native hiring',
             'react native contractor remote',
             'react native freelance remote',
             'react native latam remote',
+            'react native latin america remote',
             'react native worldwide remote',
             'react native work from anywhere',
-            'react native vaga remoto',
             'react native b2b remote',
+            'reactnative hiring remotejobs',
+            'reactnative mobiledeveloper hiring',
+            'react native desarrollador remoto',
+            'react native vacante remoto latam',
+            'react native vaga remoto',
         ],
         "filter_keywords": [
             "react native", "react-native", "reactnative", "expo",
