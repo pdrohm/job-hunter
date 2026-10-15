@@ -77,3 +77,26 @@ once (sent, cancelled or skipped by a profile rule). `/pausar` stops it;
 Safety: only your chat ID is accepted; Claude gets only browser tools (no shell, no
 files, no code execution, no cookies); the browser is a separate Chrome profile; the
 only file it can upload is your CV. History: `~/.job-hunter/applications.jsonl`.
+
+## Daily bots: morning brief and interview prep (on your Mac)
+
+Two more Telegram bots, each with its own token, so their messages stay out of the job alerts.
+
+- **Morning brief** (`morning_brief.py`), every day at 08:00: today's calendar (interviews marked 🎯),
+  weather, dollar rate, unread important Gmail, and applications sent in the last 24 h.
+  Each part is optional: no config, no part.
+- **Interview prep** (`interview_prep.py`), checks every 10 minutes: about 60 minutes before an
+  interview, Claude Code searches the company on the web and sends a prep note (company, role,
+  which stories from `apply/profile.md` to tell, likely questions, questions to ask).
+  Two Claude runs, so an invite with hidden instructions cannot leak your data: the research run
+  has only WebSearch/WebFetch and never sees your profile; the run that writes the note sees your
+  profile but has no tools. An event is an interview when its title or description has a word
+  from `PREP_KEYWORDS`.
+
+Setup:
+
+1. Make two bots with @BotFather. Send any message to each one.
+2. Fill the "Daily bots" part of `.env` (see `.env.example`). The calendar link is the
+   Google Calendar "Secret address in iCal format". Keep it secret.
+3. Try them: `python morning_brief.py --dry-run` and `python interview_prep.py --next --dry-run`.
+4. Install: `sh scripts/install_daily_bots_mac.sh` (change the time with `MORNING_HOUR=7 MORNING_MINUTE=30`).

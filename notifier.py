@@ -35,8 +35,9 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_MESSAGE_CHARS = 4096  # Telegram hard limit per message
 
 
-def _token() -> str:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+def _token(override: str = None) -> str:
+    """The job bot's token, or another bot's (morning brief, interview prep)."""
+    token = (override or os.environ.get("TELEGRAM_BOT_TOKEN", "")).strip()
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set")
     return token
@@ -53,9 +54,12 @@ def is_configured() -> bool:
     return bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
 
 
-def call(method: str, payload: dict, retries: int = 3, files: dict = None, timeout: int = 15) -> dict:
-    """Call a Telegram Bot API method. `files` sends multipart (photos, documents)."""
-    url = TELEGRAM_API.format(token=_token(), method=method)
+def call(method: str, payload: dict, retries: int = 3, files: dict = None, timeout: int = 15,
+         token: str = None) -> dict:
+    """Call a Telegram Bot API method. `files` sends multipart (photos, documents).
+    `token` sends as another bot; the default is TELEGRAM_BOT_TOKEN."""
+    token = _token(token)
+    url = TELEGRAM_API.format(token=token, method=method)
     for attempt in range(retries):
         try:
             if files:
@@ -69,7 +73,7 @@ def call(method: str, payload: dict, retries: int = 3, files: dict = None, timeo
         except requests.RequestException as e:
             # The URL contains the bot token, and request errors echo the URL
             log.warning("Telegram request failed (%s), retrying",
-                        str(e).replace(_token(), "<redacted>"))
+                        str(e).replace(token, "<redacted>"))
             time.sleep(2 ** attempt)
             continue
         data = resp.json() if resp.content else {}
@@ -85,7 +89,7 @@ def call(method: str, payload: dict, retries: int = 3, files: dict = None, timeo
     raise RuntimeError(f"Telegram {method} failed after {retries} attempts")
 
 
-def send_message(text: str, reply_markup: dict = None) -> dict:
+def send_message(text: str, reply_markup: dict = None, token: str = None) -> dict:
     """Send an HTML-formatted message, split into chunks under Telegram's limit.
     Buttons (reply_markup) go on the last chunk. Returns the last message."""
     chunks = split_message(text)
@@ -99,7 +103,7 @@ def send_message(text: str, reply_markup: dict = None) -> dict:
         }
         if reply_markup and i == len(chunks) - 1:
             payload["reply_markup"] = reply_markup
-        message = call("sendMessage", payload).get("result", {})
+        message = call("sendMessage", payload, token=token).get("result", {})
         time.sleep(0.5)  # stay well under 1 msg/sec per chat
     return message
 
@@ -283,9 +287,9 @@ def notify_new(opportunities: list[Opportunity], header: str = None):
         send_message(format_opportunity(opp, i), reply_markup=apply_button(opp))
 
 
-def print_chat_ids():
+def print_chat_ids(token: str = None):
     """Print chat IDs of everyone who recently messaged the bot."""
-    data = call("getUpdates", {})
+    data = call("getUpdates", {}, token=token)
     chats = {}
     for update in data.get("result", []):
         msg = update.get("message") or update.get("channel_post") or {}
