@@ -261,6 +261,46 @@ repost_score = compute_relevance("React Native Dev", "x", ResultType.JOB,
 test("Repost gets no 'fresh' bonus", repost_score == old_score, f"{repost_score} vs {old_score}")
 
 
+print("\n━━━ Junior Filter Tests ━━━")
+from rn_linkedin_scraper import filter_junior, is_junior
+for title in ["Junior React Native Developer", "Jr. Mobile Engineer", "React Native Dev (Jr)",
+              "Entry-Level React Native Developer", "React Native Intern", "Desenvolvedor Júnior React Native",
+              "Graduate Mobile Engineer"]:
+    test(f"Junior title dropped: {title}", is_junior(make_opp(title=title)))
+test("Entry level seniority dropped", is_junior(make_opp(title="React Native Developer", seniority="Entry level")))
+test("Internship seniority dropped", is_junior(make_opp(title="React Native Developer", seniority="Internship")))
+for title in ["Senior React Native Engineer", "React Native Developer", "Staff Mobile Engineer (React Native)"]:
+    test(f"Kept: {title}", not is_junior(make_opp(title=title, seniority="Mid-Senior level")))
+test("Description mentioning juniors is kept",
+     not is_junior(make_opp(title="Senior RN Engineer", description="You will mentor junior devs")))
+test("filter_junior keeps only non-junior",
+     [o.title for o in filter_junior([make_opp(title="Junior RN"), make_opp(title="Senior RN")])] == ["Senior RN"])
+
+
+print("\n━━━ Post Apply Link Tests ━━━")
+from rn_linkedin_scraper import find_apply_email, find_apply_link
+test("ATS link beats company site",
+     find_apply_link("We're hiring! Site: https://acme.com Apply: https://jobs.lever.co/acme/1 #reactnative")
+     == "https://jobs.lever.co/acme/1")
+test("LinkedIn redirect is unwrapped",
+     find_apply_link("Apply below", ["https://www.linkedin.com/redir/redirect?url=https%3A%2F%2Fboards.greenhouse.io%2Facme%2Fjobs%2F9&urlhash=x"])
+     == "https://boards.greenhouse.io/acme/jobs/9")
+test("Profile, hashtag and company links skipped",
+     find_apply_link("x", ["https://www.linkedin.com/in/someone", "https://www.linkedin.com/feed/hashtag/?keywords=rn",
+                           "https://www.linkedin.com/company/acme"]) == "")
+test("lnkd.in short link kept", find_apply_link("Apply here: lnkd.in/dAbC123.") == "https://lnkd.in/dAbC123")
+test("LinkedIn job link found",
+     find_apply_link("Apply: https://www.linkedin.com/jobs/view/4471234567/ or see https://acme.com")
+     == "https://www.linkedin.com/jobs/view/4471234567/")
+test("No link → empty", find_apply_link("Send me a DM") == "")
+test("Feed hashtag search links skipped",
+     find_apply_link("x", ["https://www.linkedin.com/search/results/all/?keywords=%23remotejobs&origin=HASH_TAG_FROM_FEED"]) == "")
+test("LinkedIn safety link is unwrapped",
+     find_apply_link("x", ["https://www.linkedin.com/safety/go/?url=https%3A%2F%2Flnkd%2Ein%2FggNu2g4n&urlhash=pH-1&isSdui=true"])
+     == "https://lnkd.in/ggNu2g4n")
+test("Email found", find_apply_email("Send CV to talent@acme.io today") == "talent@acme.io")
+
+
 # ─────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────

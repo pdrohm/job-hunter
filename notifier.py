@@ -23,7 +23,11 @@ import requests
 from dotenv import load_dotenv
 
 import focus
-from rn_linkedin_scraper import Opportunity, _age_days_from_iso
+from rn_linkedin_scraper import Opportunity, _age_days_from_iso, extract_linkedin_job_id
+
+# Label of a post's apply link in the alert. The apply bot finds the link by
+# this label when you tap Candidatar (callback_data is too small for a URL).
+APPLY_LINK_LABEL = "Link para candidatar"
 
 log = logging.getLogger("notifier")
 
@@ -142,10 +146,15 @@ ABOUT_CHARS = 220
 
 def apply_button(opp: Opportunity) -> Optional[dict]:
     """Candidatar button for one job. callback_data is capped at 64 bytes by
-    Telegram, so it carries only the LinkedIn job ID (posts have none)."""
-    if not opp.job_id:
-        return None
-    return buttons([[("📝 Candidatar", f"apply:{opp.job_id}")]])
+    Telegram, so it carries only the LinkedIn job ID. A post has no ID: its
+    button says "applypost" and the bot reads the link from the alert itself
+    (the apply link, else the post, where Claude looks for one)."""
+    job_id = opp.job_id or extract_linkedin_job_id(opp.apply_url)
+    if job_id:
+        return buttons([[("📝 Candidatar", f"apply:{job_id}")]])
+    if opp.result_type == "post":
+        return buttons([[("📝 Candidatar", "applypost")]])
+    return None
 
 
 def _k(value: float) -> str:
@@ -245,6 +254,11 @@ def format_opportunity(opp: Opportunity, index: int = None) -> str:
     about = _about(opp)
     if about:
         lines.append(f"<i>{e(about)}</i>")
+
+    if opp.apply_url:
+        lines.append(f'🔗 <a href="{e(opp.apply_url, quote=True)}">{APPLY_LINK_LABEL}</a>')
+    if opp.apply_email:
+        lines.append(f"📧 {e(opp.apply_email)}")
 
     source = "LinkedIn" if "linkedin.com" in opp.url else "a vaga"
     lines.append(f'<a href="{e(opp.url, quote=True)}">Abrir no {source}</a>')

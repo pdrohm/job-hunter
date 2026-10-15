@@ -9,11 +9,16 @@ LOG="$HOME/.job-hunter/apply_bot.log"
 
 [ -x "$PY" ] || { echo "Missing $PY. Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
 [ -f "$REPO/apply/profile.md" ] || { echo "Missing apply/profile.md (copy apply/profile.example.md)"; exit 1; }
-[ -f "$REPO/apply/resume.pdf" ] || { echo "Missing apply/resume.pdf"; exit 1; }
+# Any PDF in apply/ (point APPLY_RESUME in .env to it if it isn't apply/resume.pdf)
+ls "$REPO"/apply/*.pdf >/dev/null 2>&1 || { echo "Missing your resume PDF in apply/"; exit 1; }
 mkdir -p "$HOME/.job-hunter" "$HOME/Library/LaunchAgents"
 
 # launchd has a minimal PATH; claude and npx need theirs
 PATH_VALUE="$(dirname "$(command -v claude)"):$(dirname "$(command -v npx)"):/usr/bin:/bin:/usr/sbin:/sbin"
+# Voice messages (optional): whisper-cli and ffmpeg, usually /opt/homebrew/bin
+for tool in whisper-cli ffmpeg; do
+  if command -v "$tool" >/dev/null; then PATH_VALUE="$(dirname "$(command -v "$tool")"):$PATH_VALUE"; fi
+done
 
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

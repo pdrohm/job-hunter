@@ -71,6 +71,7 @@ _READ_CARDS_JS = """
     return {
       idx: i,
       text: (box ? box.textContent : c.innerText || '').trim(),
+      links: box ? [...box.querySelectorAll('a[href]')].map(a => a.href) : [],
       author: (nameLink ? nameLink.innerText.trim().split('\\n')[0] : '') || lines[0] || '',
       author_url: authorLink ? authorLink.href.split('?')[0] : '',
     };
@@ -226,7 +227,7 @@ class LinkedInPostSearch:
             raise NotLoggedIn(f"LinkedIn asks to log in ({url.split('?')[0]}). Run: python linkedin_posts.py --login")
 
     def search(self, query: str, date_posted: str = "past-week", max_posts: int = 25) -> list[dict]:
-        """Posts for one query: [{url, text, author, author_url}], newest first."""
+        """Posts for one query: [{url, text, links, author, author_url}], newest first."""
         page = self.page
         page.goto(build_search_url(query, date_posted), wait_until="domcontentloaded", timeout=45000)
         self._check_login()

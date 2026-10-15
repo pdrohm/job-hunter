@@ -79,6 +79,9 @@ class Opportunity:
     open_abroad: bool = False
     # Real age from the job ID (LinkedIn shows the REPOST date as "posted")
     original_age_days: Optional[float] = None
+    # Posts: the link to apply that the post itself gives, and its contact email
+    apply_url: str = ""
+    apply_email: str = ""
 
     @property
     def uid(self) -> str:
@@ -1094,6 +1097,64 @@ def scrape_yahoo_for_linkedin_posts(session: requests.Session, query: str, time_
     return results
 
 
+# Links in a post that are never the place to apply. On linkedin.com only a
+# job link counts (hashtags are /search/ links, names are /in/ links).
+_NOT_APPLY_LINK_RE = re.compile(
+    r"licdn\.com|(?:youtube|instagram|facebook|twitter|x)\.com/|youtu\.be/", re.IGNORECASE)
+# Job boards / ATS: these links are the form itself
+_ATS_HOST_RE = re.compile(
+    r"greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|smartrecruiters\.com|bamboohr\.com|"
+    r"recruitee\.com|teamtailor\.com|breezy\.hr|jobvite\.com|myworkdayjobs\.com|workday\.com|"
+    r"personio\.\w+|rippling\.com|wellfound\.com|gupy\.io|jobs\.\w|careers\.\w|typeform\.com|"
+    r"forms\.gle|docs\.google\.com/forms|tally\.so|airtable\.com", re.IGNORECASE)
+_JOB_WORD_RE = re.compile(r"job|career|apply|vaga|hiring|position|opening|recruit|talent", re.IGNORECASE)
+_URL_IN_TEXT_RE = re.compile(r"(?:https?://|www\.|lnkd\.in/)[^\s<>\"')\]]+", re.IGNORECASE)
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}", re.IGNORECASE)
+
+
+def _unwrap_link(href: str) -> str:
+    """linkedin.com/redir/redirect?url=<target> and linkedin.com/safety/go/?url=<target>
+    → target; adds https:// when missing."""
+    href = (href or "").strip().rstrip(".,;:!?")
+    parsed = urllib.parse.urlparse(href if "://" in href else "https://" + href)
+    if "linkedin.com" in parsed.netloc and parsed.path.startswith(("/redir/", "/safety/")):
+        target = urllib.parse.parse_qs(parsed.query).get("url", [""])[0]
+        if target:
+            return _unwrap_link(target)
+    return parsed.geturl()
+
+
+def find_apply_link(text: str, hrefs: list[str] = ()) -> str:
+    """Best "apply here" link in a post: an ATS / job board first, then a
+    LinkedIn job, then a link that looks like a job page, then any other link
+    (lnkd.in short links can't be read without opening them)."""
+    links, seen = [], set()
+    for raw in [*hrefs, *_URL_IN_TEXT_RE.findall(text or "")]:
+        url = _unwrap_link(raw)
+        key = url.lower().rstrip("/")
+        if key in seen or _NOT_APPLY_LINK_RE.search(url) or "hashtag" in key:
+            continue
+        if "linkedin.com" in urllib.parse.urlparse(url).netloc and not extract_linkedin_job_id(url):
+            continue
+        seen.add(key)
+        links.append(url)
+
+    def rank(url: str) -> int:
+        if _ATS_HOST_RE.search(url):
+            return 0
+        if extract_linkedin_job_id(url):
+            return 1
+        if _JOB_WORD_RE.search(url):
+            return 2
+        return 3
+    return min(links, key=rank) if links else ""
+
+
+def find_apply_email(text: str) -> str:
+    m = _EMAIL_RE.search(text or "")
+    return m.group(0) if m else ""
+
+
 def enrich_linkedin_post(session: requests.Session, opp: Opportunity) -> bool:
     """Public post pages show the full text without login. Search snippets
     are ~150 chars, so reading the post is what makes filtering possible."""
@@ -1111,6 +1172,8 @@ def enrich_linkedin_post(session: requests.Session, opp: Opportunity) -> bool:
     if not text:
         return False
     opp.description = text[:DESCRIPTION_MAX_CHARS]
+    opp.apply_url = find_apply_link(text, [a.get("href", "") for a in body.select("a")] if body else [])
+    opp.apply_email = find_apply_email(text)
     opp.work_auth_blocker = focus.sponsorship_blocker(text)
     opp.contractor = focus.is_contractor(text)
     opp.open_abroad = focus.mentions_open_region(text)
@@ -1153,6 +1216,8 @@ def linkedin_posts_to_opportunities(posts: list[dict], query: str) -> list[Oppor
             contractor=focus.is_contractor(text),
             open_abroad=focus.mentions_open_region(text),
             salary=focus.extract_salary(text),
+            apply_url=find_apply_link(text, p.get("links") or []),
+            apply_email=find_apply_email(text),
         ))
     return results
 
@@ -1573,6 +1638,27 @@ def filter_post_intent(opportunities: list[Opportunity]) -> list[Opportunity]:
         filtered.append(opp)
     if excluded:
         log.info("Filtered out %d posts that are not hiring", excluded)
+    return filtered
+
+
+_JUNIOR_TITLE_RE = re.compile(
+    r"\b(?:junior|júnior|jr\.?|entry[\s-]level|graduate|new\s+grad|interns?|internship|trainee|estágio|estagiári[oa])\b",
+    re.IGNORECASE)
+_JUNIOR_SENIORITY = {"entry level", "internship"}
+
+
+def is_junior(opp: Opportunity) -> bool:
+    """Junior / entry level / intern role. Only the title and LinkedIn's
+    seniority field count: descriptions often say "mentor junior devs"."""
+    return (opp.seniority.strip().lower() in _JUNIOR_SENIORITY
+            or bool(_JUNIOR_TITLE_RE.search(opp.title)))
+
+
+def filter_junior(opportunities: list[Opportunity]) -> list[Opportunity]:
+    """Drop junior, entry level and intern roles."""
+    filtered = [o for o in opportunities if not is_junior(o)]
+    if len(filtered) < len(opportunities):
+        log.info("Filtered out %d junior / entry level results", len(opportunities) - len(filtered))
     return filtered
 
 

@@ -23,6 +23,7 @@ Config (environment variables or .env):
     WATCH_TOP_MARKETS_ONLY   true = only US / Canada / Europe companies hiring LATAM, and
                              only real React Native / Expo roles (default: true)
     WATCH_MAX_JOB_AGE_DAYS   drop jobs FIRST posted more than N days ago (default: 7)
+    WATCH_ALLOW_JUNIOR       true = keep junior / entry level / intern roles (default: false)
     WATCH_TIME_RANGE         24h, 3d, 1w, ...           (default: 24h)
     WATCH_INTERVAL_MINUTES   minutes between runs       (default: 120)
     WATCH_MIN_SCORE          only notify at/above score (default: 50)
@@ -42,7 +43,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 import notifier
-from rn_linkedin_scraper import Opportunity, dedup_key, run_scraper_with_progress
+from rn_linkedin_scraper import Opportunity, dedup_key, filter_junior, run_scraper_with_progress
 
 log = logging.getLogger("watcher")
 
@@ -115,26 +116,33 @@ def select_new(results: list[Opportunity], store: SeenStore, min_score: float) -
     return [o for o in results if store.is_new(o) and o.relevance_score >= min_score]
 
 
+def scrape(time_range: str = None, engines: list[str] = None, max_job_age_days: float = None) -> list[Opportunity]:
+    """One search with the WATCH_* filters. The apply bot's /procurar uses it
+    too, so both always look for the same kind of job."""
+    results = run_scraper_with_progress(
+        max_results=200,
+        time_range=time_range or _env("WATCH_TIME_RANGE", "24h"),
+        on_progress=lambda e: log.info(e["log_line"]) if "log_line" in e else None,
+        techs=_env_list("WATCH_TECHS", "react_native"),
+        engines=engines or _env_list("WATCH_ENGINES", "linkedin,linkedin_posts"),
+        locations=_env_list("WATCH_LOCATIONS", "Worldwide,Latin America,Brazil"),
+        contract_only=_env_bool("WATCH_CONTRACT_ONLY", False),
+        exclude_sponsorship=not _env_bool("WATCH_ALLOW_SPONSORSHIP", False),
+        exclude_countries=_env_list("WATCH_EXCLUDE_COUNTRIES", ""),
+        max_job_age_days=max_job_age_days or float(_env("WATCH_MAX_JOB_AGE_DAYS", "7")),
+        region_only=not _env_bool("WATCH_ANY_REGION", False),
+        top_markets_only=_env_bool("WATCH_TOP_MARKETS_ONLY", True),
+    )
+    return results if _env_bool("WATCH_ALLOW_JUNIOR", False) else filter_junior(results)
+
+
 def run_once(dry_run: bool = False, seed: bool = False) -> int:
     """One scrape + notify cycle. Returns the number of new jobs sent.
     seed=True only fills the seen store (e.g. first run on a new machine)."""
     min_score = float(_env("WATCH_MIN_SCORE", "50"))
     max_per_run = int(_env("WATCH_MAX_PER_RUN", "15"))
 
-    results = run_scraper_with_progress(
-        max_results=200,
-        time_range=_env("WATCH_TIME_RANGE", "24h"),
-        on_progress=lambda e: log.info(e["log_line"]) if "log_line" in e else None,
-        techs=_env_list("WATCH_TECHS", "react_native"),
-        engines=_env_list("WATCH_ENGINES", "linkedin,linkedin_posts"),
-        locations=_env_list("WATCH_LOCATIONS", "Worldwide,Latin America,Brazil"),
-        contract_only=_env_bool("WATCH_CONTRACT_ONLY", False),
-        exclude_sponsorship=not _env_bool("WATCH_ALLOW_SPONSORSHIP", False),
-        exclude_countries=_env_list("WATCH_EXCLUDE_COUNTRIES", ""),
-        max_job_age_days=float(_env("WATCH_MAX_JOB_AGE_DAYS", "7")),
-        region_only=not _env_bool("WATCH_ANY_REGION", False),
-        top_markets_only=_env_bool("WATCH_TOP_MARKETS_ONLY", True),
-    )
+    results = scrape()
 
     store = SeenStore(_data_dir() / "seen_jobs.json")
     first_run = store.is_empty

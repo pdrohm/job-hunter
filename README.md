@@ -17,6 +17,7 @@ By default the watcher:
 - searches LinkedIn jobs in `Worldwide`, `Latin America` and `Brazil` (`WATCH_LOCATIONS`);
 - drops jobs that need US/UK/EU work authorization, citizenship, a clearance or visa sponsorship (rules in `focus.py`; turn off with `WATCH_ALLOW_SPONSORSHIP=true`);
 - ranks higher jobs open to people abroad (worldwide, LATAM, contractor, B2B, PJ, Deel) and lower remote jobs pinned to one foreign country;
+- drops junior, entry level and intern roles (title or LinkedIn seniority; turn off with `WATCH_ALLOW_JUNIOR=true`);
 - keeps only React Native / Expo roles: the words must be in the job's title, or be the main stack in its own text (a "React Native is a plus" web job fails);
 - keeps only jobs in LATAM, listed as worldwide, or whose text says LATAM / worldwide people can apply (turn off with `WATCH_ANY_REGION=true`);
 - keeps only US / Canada / Europe companies (or agencies for their clients): the job is listed there, or its text says where the company is based, its time zone or that it pays in USD/EUR. Spanish / Portuguese jobs from local companies are dropped, and you get at most 1 job per company per run (turn off with `WATCH_TOP_MARKETS_ONLY=false`: then a mobile role on a React/TypeScript stack also counts).
@@ -47,12 +48,31 @@ talk normally ("candidata nessa: <link>", "muda o salário para 7k", "como tá?"
 A small Claude call with no tools reads the message and picks the action; the final
 send is always the ✅ button.
 Claude opens the job in a separate Chrome, fills the form, and sends you a screenshot
-plus the answers it wrote. **Nothing is sent until you tap ✅ Enviar.**
+plus the answers it wrote. **Nothing is sent until you tap ✅ Enviar** — except auto-apply below.
 
 1. `cp apply/profile.example.md apply/profile.md` and fill it in (Claude uses only this).
-2. Put your CV at `apply/resume.pdf`.
+2. Put your CV at `apply/resume.pdf`. Recruiters see the file name: to use another one
+   (e.g. `apply/YourName-resume.pdf`), set `APPLY_RESUME=apply/YourName-resume.pdf` in `.env`.
 3. Test it: `.venv/bin/python apply_bot.py`, then send `/candidatar <link>` on Telegram.
 4. Start it at login: `sh scripts/install_apply_bot_mac.sh`
+5. Optional, voice messages: `brew install whisper-cpp ffmpeg`, then download the model:
+   `curl -L -o ~/.job-hunter/whisper/ggml-large-v3-turbo-q5_0.bin --create-dirs https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin`.
+   Voice is transcribed on your Mac and works like a typed message. The audio is
+   deleted right after. Language: `APPLY_WHISPER_LANG` (default `pt`, `auto` detects).
+
+Search on demand: `/procurar` (or "procura vaga", also by voice) searches the last week
+now and sends the jobs that match (5–10 min). Jobs you applied to never come back. A job
+it already showed comes back only when the match is very high (`APPLY_SEARCH_RESEND_SCORE`,
+default 80). Other settings: `APPLY_SEARCH_MIN_SCORE`, `APPLY_SEARCH_MAX`,
+`APPLY_SEARCH_TIME_RANGE`. `/aplicadas` lists the jobs you applied to, with 🗑 buttons to
+remove one from the history.
+
+Auto-apply: every `APPLY_AUTO_SEARCH_HOURS` (default 2) the bot searches quietly and
+applies by itself, one at a time, to jobs at `APPLY_AUTO_SCORE` (default 100 pts; `/procurar`
+feeds it too). It sends **without ✅ only when the form is complete** (no empty required
+field); otherwise it stops and waits for you, like a normal application. A job is tried
+once (sent, cancelled or skipped by a profile rule). `/pausar` stops it;
+`APPLY_AUTO_SCORE=0` turns it off. Each job costs up to 2 Claude steps (`$3` cap each).
 
 Safety: only your chat ID is accepted; Claude gets only browser tools (no shell, no
 files, no code execution, no cookies); the browser is a separate Chrome profile; the
