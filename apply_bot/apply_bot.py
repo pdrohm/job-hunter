@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -236,6 +237,22 @@ Também pode tocar em <b>📝 Candidatar</b> nos alertas de vagas."""
 # ─────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────
+
+# Auto-apply only sends forms hosted on these job boards (or their subdomains).
+# Any other host waits for ✅: a link taken from a post or a job text could
+# lead to a fake form that collects the candidate's personal data.
+AUTO_SUBMIT_HOSTS = (
+    "linkedin.com", "greenhouse.io", "lever.co", "ashbyhq.com", "workable.com",
+    "smartrecruiters.com", "myworkdayjobs.com", "bamboohr.com", "recruitee.com",
+    "teamtailor.com", "breezy.hr", "jobvite.com", "icims.com", "personio.com", "personio.de",
+)
+
+
+def trusted_job_board(url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and any(host == d or host.endswith("." + d) for d in AUTO_SUBMIT_HOSTS)
+
 
 def _env(name: str, default: str) -> str:
     return os.environ.get(name, "").strip() or default
@@ -1012,7 +1029,9 @@ class ApplyBot:
             queued.add(job_search.url_key(self.app.url))
         added = []
         for o in opps:
-            url = o.apply_url or o.url  # a post: go straight to the link it gives
+            if o.result_type != "job":
+                continue  # a post's link comes from its text: never auto-apply, the ✅ button still works
+            url = o.apply_url or o.url
             key = job_search.url_key(url)
             if o.relevance_score >= self.cfg.auto_score and key not in tried | queued:
                 queued.add(key)
@@ -1240,16 +1259,21 @@ class ApplyBot:
 
         app.stage = "review"
         app.review_n += 1
-        if app.auto and not app.report.get("missing"):
-            # Auto-apply: complete form → send it now, no ✅. The screenshot is
-            # still sent first, so you can see what went out.
+        form_url = app.report.get("apply_url") or ""
+        if app.auto and not app.report.get("missing") and trusted_job_board(form_url):
+            # Auto-apply: complete form on a known job board → send it now, no ✅.
+            # The screenshot is still sent first, so you can see what went out.
             self.send_screenshot(
                 app, result.report.get("screenshot", ""),
                 "🤖 <b>Formulário completo. Enviando sozinho…</b>\n" + format_report(result.report) + cost)
             self.run_step(app, "submitting", SUBMIT_PROMPT)
             return
-        if app.auto:
+        if app.auto and app.report.get("missing"):
             self.say("🤖 Candidatura automática: faltam respostas, então espero você.")
+        elif app.auto:
+            host = urlparse(form_url).hostname or "um site desconhecido"
+            self.say(f"🤖 Candidatura automática: o formulário está em <b>{html.escape(host)}</b>, "
+                     "que não é um site de vagas conhecido. Espero você.")
         self.send_screenshot(
             app, result.report.get("screenshot", ""),
             "📝 <b>Formulário preenchido — NÃO enviado.</b>\n" + format_report(result.report) + cost

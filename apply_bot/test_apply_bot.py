@@ -616,7 +616,8 @@ with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegra
     bot.queue_auto([auto_opp("https://www.linkedin.com/jobs/view/1111111111/?ref=x", 100)])
     test("Same job not queued twice", len(bot.auto_queue) == 1)
 
-    rc.side_effect = [fake_result("ready"), fake_result("submitted", screenshot="submitted.png")]
+    rc.side_effect = [fake_result("ready", apply_url="https://www.linkedin.com/jobs/view/1111111111/apply/"),
+                      fake_result("submitted", screenshot="submitted.png")]
     bot.last_search = apply_bot.time.time()  # no timed search in this test
     bot.tick_auto()
     test("Complete form sent without ✅", bot.app is None and "SUBMIT NOW" in bot.prompts[-1])
@@ -638,6 +639,31 @@ with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegra
     rc.side_effect = [fake_result("skip")]
     bot.tick_auto()
     test("Profile skip drops auto job", bot.app is None and "skipped" in (acfg.home / "applications.jsonl").read_text())
+
+    rc.side_effect = [fake_result("ready", apply_url="https://careers-acme.example.com/apply")]
+    bot.queue_auto([auto_opp("https://www.linkedin.com/jobs/view/7777777777/", 100)])
+    bot.tick_auto()
+    test("Complete form on unknown host → waits for ✅", bot.app and bot.app.stage == "review"
+         and "SUBMIT NOW" not in bot.prompts[-1] and "careers-acme.example.com" in bot.said[-2][0])
+    bot.handle_update(update_msg("/cancelar"))
+
+    rc.side_effect = [fake_result("ready")]
+    bot.queue_auto([auto_opp("https://www.linkedin.com/jobs/view/8888888888/", 100)])
+    bot.tick_auto()
+    test("Form URL not reported → waits for ✅", bot.app and "SUBMIT NOW" not in bot.prompts[-1])
+    bot.handle_update(update_msg("/cancelar"))
+
+    post = auto_opp("https://www.linkedin.com/posts/someone-hiring", 100)
+    post.result_type = _RT.POST
+    post.apply_url = "https://www.linkedin.com/jobs/view/9999999999/"
+    bot.queue_auto([post])
+    test("Posts are never auto-queued", not bot.auto_queue)
+
+    test("Trusted: Greenhouse subdomain", apply_bot.trusted_job_board("https://job-boards.greenhouse.io/x/jobs/1"))
+    test("Trusted: LinkedIn", apply_bot.trusted_job_board("https://www.linkedin.com/jobs/view/1/apply/"))
+    test("Not trusted: look-alike host", not apply_bot.trusted_job_board("https://linkedin.com.evil.io/jobs"))
+    test("Not trusted: plain http", not apply_bot.trusted_job_board("http://jobs.lever.co/x"))
+    test("Not trusted: empty", not apply_bot.trusted_job_board(""))
 
     bot.paused = True
     bot.queue_auto([auto_opp("https://www.linkedin.com/jobs/view/5555555555/", 100)])

@@ -42,7 +42,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from job_hunter import notifier
+from job_hunter import notifier, regras
 from shared import telegram
 from job_hunter.rn_linkedin_scraper import Opportunity, dedup_key, filter_junior, run_scraper_with_progress
 
@@ -135,7 +135,8 @@ def scrape(time_range: str = None, engines: list[str] = None, max_job_age_days: 
         region_only=not _env_bool("WATCH_ANY_REGION", False),
         top_markets_only=_env_bool("WATCH_TOP_MARKETS_ONLY", True),
     )
-    return results if _env_bool("WATCH_ALLOW_JUNIOR", False) else filter_junior(results)
+    results = results if _env_bool("WATCH_ALLOW_JUNIOR", False) else filter_junior(results)
+    return regras.apply(results)
 
 
 def run_once(dry_run: bool = False, seed: bool = False) -> int:
