@@ -11,8 +11,8 @@ Runs on your Mac only (not on GitHub: a cloud IP with your session would get
 the account flagged).
 
 Usage:
-    python linkedin_posts.py --login           # open Chrome, log in once
-    python linkedin_posts.py "react native hiring"   # test one search
+    python -m job_hunter.linkedin_posts --login           # open Chrome, log in once
+    python -m job_hunter.linkedin_posts "react native hiring"   # test one search
 
 Config (environment variables or .env):
     LINKEDIN_PROFILE_DIR   Chrome profile dir   (default: ~/.job-hunter/linkedin-profile)
@@ -143,7 +143,7 @@ def is_available() -> tuple[bool, str]:
     if not Path(chrome_bin()).exists():
         return False, f"Chrome not found at {chrome_bin()}"
     if not (profile_dir() / "Default").exists():
-        return False, "not logged in yet (run: python linkedin_posts.py --login)"
+        return False, "not logged in yet (run: python -m job_hunter.linkedin_posts --login)"
     return True, ""
 
 
@@ -224,7 +224,7 @@ class LinkedInPostSearch:
     def _check_login(self):
         url = self.page.url
         if any(p in url for p in ("/login", "/checkpoint", "/authwall", "/uas/", "/signup")):
-            raise NotLoggedIn(f"LinkedIn asks to log in ({url.split('?')[0]}). Run: python linkedin_posts.py --login")
+            raise NotLoggedIn(f"LinkedIn asks to log in ({url.split('?')[0]}). Run: python -m job_hunter.linkedin_posts --login")
 
     def search(self, query: str, date_posted: str = "past-week", max_posts: int = 25) -> list[dict]:
         """Posts for one query: [{url, text, links, author, author_url}], newest first."""

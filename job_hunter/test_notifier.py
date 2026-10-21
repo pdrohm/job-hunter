@@ -10,9 +10,10 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-import notifier
-from rn_linkedin_scraper import Opportunity, ResultType
-from watcher import SeenStore, select_new
+from job_hunter import notifier
+from shared import telegram
+from job_hunter.rn_linkedin_scraper import Opportunity, ResultType
+from job_hunter.watcher import SeenStore, select_new
 
 PASS = "✓"
 FAIL = "✗"
@@ -77,18 +78,18 @@ ok = notifier.format_opportunity(make_opp(salary="USD 40-50/hour"))
 test("Hourly converted, no warning", "≈ $6.4k–8k/mês" in ok and "abaixo" not in ok, ok)
 
 long_text = "\n\n".join(["x" * 1000] * 10)
-chunks = notifier.split_message(long_text)
+chunks = telegram.split_message(long_text)
 test("Splits long messages", len(chunks) > 1, f"{len(chunks)} chunks")
-test("Every chunk under Telegram limit", all(len(c) <= notifier.MAX_MESSAGE_CHARS for c in chunks))
-test("Short message is one chunk", len(notifier.split_message("hello")) == 1)
+test("Every chunk under Telegram limit", all(len(c) <= telegram.MAX_MESSAGE_CHARS for c in chunks))
+test("Short message is one chunk", len(telegram.split_message("hello")) == 1)
 
 
 # ─────────────────────────────────────────────
 print("\n━━━ Telegram Send Tests ━━━")
 
 with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID": "42"}), \
-        mock.patch("notifier.time.sleep"), \
-        mock.patch("notifier.requests.post") as post:
+        mock.patch("shared.telegram.time.sleep"), \
+        mock.patch("shared.telegram.requests.post") as post:
     post.return_value = mock.Mock(status_code=200, content=b"{}", json=lambda: {"ok": True})
     notifier.notify_new([make_opp(), make_opp(job_id="2", url="https://x/2")])
     sent = [c.kwargs["json"] for c in post.call_args_list]
@@ -105,18 +106,18 @@ with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID":
     test("Sends nothing when no jobs", not post.called)
 
 with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "T", "TELEGRAM_CHAT_ID": "42"}), \
-        mock.patch("notifier.time.sleep") as sleep, \
-        mock.patch("notifier.requests.post") as post:
+        mock.patch("shared.telegram.time.sleep") as sleep, \
+        mock.patch("shared.telegram.requests.post") as post:
     limited = mock.Mock(status_code=429, content=b"{}",
                         json=lambda: {"ok": False, "parameters": {"retry_after": 7}})
     ok = mock.Mock(status_code=200, content=b"{}", json=lambda: {"ok": True})
     post.side_effect = [limited, ok]
-    notifier.send_message("hi")
+    telegram.send_message("hi")
     test("Retries after 429", post.call_count == 2)
     test("Waits Telegram's retry_after", mock.call(7) in sleep.call_args_list)
 
 with mock.patch.dict(os.environ, {}, clear=True):
-    test("Not configured without env", not notifier.is_configured())
+    test("Not configured without env", not telegram.is_configured())
 
 
 # ─────────────────────────────────────────────

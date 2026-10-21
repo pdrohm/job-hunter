@@ -3,17 +3,17 @@
 Job watcher: runs the scraper on a schedule and sends only NEW jobs to Telegram.
 
 Usage:
-    python watcher.py            # Loop forever (every WATCH_INTERVAL_MINUTES)
-    python watcher.py --once     # One run, then exit (for cron / GitHub Actions)
-    python watcher.py --dry-run  # Print new jobs instead of sending them
-    python watcher.py --seed     # Mark current jobs as seen, send nothing
+    python -m job_hunter.watcher            # Loop forever (every WATCH_INTERVAL_MINUTES)
+    python -m job_hunter.watcher --once     # One run, then exit (for cron / GitHub Actions)
+    python -m job_hunter.watcher --dry-run  # Print new jobs instead of sending them
+    python -m job_hunter.watcher --seed     # Mark current jobs as seen, send nothing
 
 Config (environment variables or .env):
-    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   required (see notifier.py)
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID   required (see shared/telegram.py)
     WATCH_TECHS              comma-separated tech IDs   (default: react_native)
     WATCH_ENGINES            comma-separated engines    (default: linkedin,linkedin_posts)
                              linkedin_posts needs a logged-in Chrome on the Mac
-                             (python linkedin_posts.py --login); skipped elsewhere
+                             (python -m job_hunter.linkedin_posts --login); skipped elsewhere
     WATCH_LOCATIONS          LinkedIn search locations  (default: Worldwide,Latin America,Brazil)
     WATCH_CONTRACT_ONLY      true = only contractor/B2B (default: false)
     WATCH_ALLOW_SPONSORSHIP  true = keep jobs needing work authorization (default: false)
@@ -42,8 +42,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-import notifier
-from rn_linkedin_scraper import Opportunity, dedup_key, filter_junior, run_scraper_with_progress
+from job_hunter import notifier
+from shared import telegram
+from job_hunter.rn_linkedin_scraper import Opportunity, dedup_key, filter_junior, run_scraper_with_progress
 
 log = logging.getLogger("watcher")
 
@@ -68,7 +69,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _data_dir() -> Path:
-    return Path(_env("DATA_DIR", str(Path(__file__).parent / "data")))
+    # Default: data/ at the repo root (one level above job_hunter/)
+    return Path(_env("DATA_DIR", str(Path(__file__).resolve().parent.parent / "data")))
 
 
 class SeenStore:
@@ -185,8 +187,8 @@ def main():
         run_once(seed=True)
         return
 
-    if not args.dry_run and not notifier.is_configured():
-        raise SystemExit("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first (see notifier.py).")
+    if not args.dry_run and not telegram.is_configured():
+        raise SystemExit("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID first (see shared/telegram.py).")
 
     if args.once or args.dry_run:
         run_once(dry_run=args.dry_run)

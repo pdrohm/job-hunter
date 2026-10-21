@@ -64,9 +64,9 @@ jobs:
         run: |
           if [ -z "$SEEN_CACHE_KEY" ]; then
             echo "No seen-jobs history yet: seeding without sending"
-            python watcher.py --seed
+            python -m job_hunter.watcher --seed
           else
-            python watcher.py --once
+            python -m job_hunter.watcher --once
           fi
 
       - name: Save seen jobs

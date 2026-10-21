@@ -6,8 +6,8 @@ country-only penalty, and the related pipeline filters.
 
 import sys
 
-from focus import is_contractor, looks_country_only, sponsorship_blocker
-from rn_linkedin_scraper import (
+from job_hunter.focus import is_contractor, looks_country_only, sponsorship_blocker
+from job_hunter.rn_linkedin_scraper import (
     Opportunity,
     ResultType,
     filter_contract,
@@ -119,8 +119,8 @@ test("Empty location", not looks_country_only("", ""))
 # ─────────────────────────────────────────────
 print("\n━━━ Excluded Country Tests ━━━")
 
-from focus import located_in, looks_portuguese
-from rn_linkedin_scraper import filter_excluded_countries
+from job_hunter.focus import located_in, looks_portuguese
+from job_hunter.rn_linkedin_scraper import filter_excluded_countries
 
 test("'Brazil' excluded", located_in("Brazil", ["Brazil"]) == "Brazil")
 test("City, state, Brazil excluded", bool(located_in("São Paulo, São Paulo, Brazil", ["Brazil"])))
@@ -149,7 +149,7 @@ test("Empty list keeps all", len(filter_excluded_countries(opps, [])) == 4)
 
 # Same job posted in Brazil and Argentina: the Argentina copy must survive
 from unittest import mock as _mock
-import rn_linkedin_scraper as rls
+from job_hunter import rn_linkedin_scraper as rls
 br = make_opp(title="React Native Dev", company_or_author="Acme", location="Brazil",
               url="https://www.linkedin.com/jobs/view/1111111111/", job_id="1111111111", source="linkedin_jobs")
 ar = make_opp(title="React Native Dev", company_or_author="Acme", location="Buenos Aires, Argentina",
@@ -188,7 +188,7 @@ posts = [
     make_opp(title="Post C", result_type=ResultType.POST, url="https://www.linkedin.com/posts/c",
              description="Hiring RN dev, office only."),
 ]
-from rn_linkedin_scraper import is_onsite_or_hybrid
+from job_hunter.rn_linkedin_scraper import is_onsite_or_hybrid
 test("Spanish/Portuguese hybrid and onsite caught",
      is_onsite_or_hybrid("Desarrollador Fullstack - HIBRIDO") and is_onsite_or_hybrid("Vaga presencial em SP")
      and not is_onsite_or_hybrid("100% remoto"))
@@ -206,7 +206,7 @@ posts.append(make_opp(title="Post C", result_type=ResultType.POST, url="https://
 kept = filter_india_full_text(posts)
 test("India recruiter phrases dropped", [o.title for o in kept] == ["Post B"], str([o.title for o in kept]))
 
-import rn_linkedin_scraper as _rls
+from job_hunter import rn_linkedin_scraper as _rls
 _opps = _rls.linkedin_posts_to_opportunities([{
     "url": "https://www.linkedin.com/posts/abc_hiring-share-7515472611372556289-zVSJ/",
     "text": "We are hiring a React Native dev\nRemote, LATAM. Contractor.", "author": "Jane Doe",
@@ -227,7 +227,7 @@ posts = [
              description="We're looking for React Native Mobile Developer Interns. Remote."),
     make_opp(title="Job", description="React Native role"),
 ]
-from focus import is_job_seeker_post
+from job_hunter.focus import is_job_seeker_post
 test("Job seeker phrases (curly apostrophe too)",
      is_job_seeker_post("I’m open to new opportunities! I’m currently exploring Senior roles")
      and is_job_seeker_post("Hi everyone! I'm looking for my next role")

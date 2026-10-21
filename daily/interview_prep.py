@@ -5,7 +5,7 @@ Telegram bot sends you a prep note written by Claude Code:
 
     🏢 The company (searched on the web now)
     🎯 The role (from your application log, if you applied with the apply bot)
-    🗣 Which of your stories to tell (from apply/profile.md)
+    🗣 Which of your stories to tell (from apply_bot/apply/profile.md)
     ❓ Likely questions, with short answer hints
     🙋 Questions to ask them
     ✅ Last checks
@@ -21,16 +21,16 @@ hidden instructions cannot make Claude send your data to a website.
 Config (.env):
     PREP_BOT_TOKEN          a third bot from @BotFather (required)
     TELEGRAM_CHAT_ID        same chat ID as the job bot
-    CALENDAR_ICS_URL        see calendar_feed.py
+    CALENDAR_ICS_URL        see daily/calendar_feed.py
     PREP_LEAD_MINUTES=60    how long before the interview
     PREP_KEYWORDS           comma-separated, default below
     PREP_MODEL=sonnet
     PREP_BUDGET_USD=1.00    split between the two runs
 
 Run:
-    python interview_prep.py              check now (launchd runs this every 10 min)
-    python interview_prep.py --next       prep the next interview in 7 days now
-    python interview_prep.py --dry-run    print instead of sending
+    python -m daily.interview_prep              check now (launchd runs this every 10 min)
+    python -m daily.interview_prep --next       prep the next interview in 7 days now
+    python -m daily.interview_prep --dry-run    print instead of sending
 """
 
 import argparse
@@ -48,12 +48,12 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-import calendar_feed
-import notifier
+from daily import calendar_feed
+from shared import telegram
 
 log = logging.getLogger("interview_prep")
 
-REPO_DIR = Path(__file__).parent
+REPO_DIR = Path(__file__).resolve().parent.parent
 CLAUDE_TIMEOUT_SECONDS = 6 * 60
 DEFAULT_KEYWORDS = ("interview,entrevista,screening,recruiter,recrutador,hiring manager,"
                     "tech call,technical call,processo seletivo,take-home review")
@@ -219,7 +219,7 @@ def claude_cmd(prompt: str, web: bool) -> list[str]:
 
 
 def run_claude(prompt: str, web: bool) -> Optional[str]:
-    from apply_bot import clean_env  # same env cleanup as the apply bot
+    from apply_bot.apply_bot import clean_env  # same env cleanup as the apply bot
     with tempfile.TemporaryDirectory(prefix="interview-prep-") as workdir:
         try:
             proc = subprocess.run(claude_cmd(prompt, web), cwd=workdir, capture_output=True, text=True,
@@ -250,7 +250,7 @@ def format_note(event: calendar_feed.Event, body: Optional[str]) -> str:
 
 def prepare(event: calendar_feed.Event, now: datetime) -> str:
     home = Path(_env("APPLY_HOME", "~/.job-hunter")).expanduser()
-    profile_path = Path(_env("APPLY_PROFILE", str(REPO_DIR / "apply" / "profile.md"))).expanduser()
+    profile_path = Path(_env("APPLY_PROFILE", str(REPO_DIR / "apply_bot" / "apply" / "profile.md"))).expanduser()
     profile = profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
     applications = matching_applications(event, home)
     research = run_claude(build_research_prompt(event, applications), web=True)
@@ -269,10 +269,10 @@ def main():
 
     token = _env("PREP_BOT_TOKEN")
     if args.get_chat_id:
-        notifier.print_chat_ids(token=token)
+        telegram.print_chat_ids(token=token)
         return
     if not calendar_feed.ics_urls():
-        sys.exit("Set CALENDAR_ICS_URL in .env (see calendar_feed.py).")
+        sys.exit("Set CALENDAR_ICS_URL in .env (see daily/calendar_feed.py).")
     if not token and not args.dry_run:
         sys.exit("Set PREP_BOT_TOKEN in .env (a new bot from @BotFather).")
 
@@ -294,7 +294,7 @@ def main():
         if args.dry_run:
             print(note)
             continue
-        notifier.send_message(note, token=token)
+        telegram.send_message(note, token=token)
         store.add(event.key, now)
 
 

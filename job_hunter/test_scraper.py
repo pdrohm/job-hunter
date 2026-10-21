@@ -8,7 +8,7 @@ import json
 import sys
 
 # Import from main module
-from rn_linkedin_scraper import (
+from job_hunter.rn_linkedin_scraper import (
     Opportunity,
     ResultType,
     compute_relevance,
@@ -232,7 +232,7 @@ test("All have scores assigned", all(o.relevance_score >= 0 for o in ranked))
 # ─────────────────────────────────────────────
 print("\n━━━ Real Job Age Tests ━━━")
 
-from rn_linkedin_scraper import (LINKEDIN_JOB_IDS_PER_DAY, annotate_original_age, estimate_job_age_days,
+from job_hunter.rn_linkedin_scraper import (LINKEDIN_JOB_IDS_PER_DAY, annotate_original_age, estimate_job_age_days,
                                  filter_old_postings)
 
 frontier = 4477811473
@@ -262,7 +262,7 @@ test("Repost gets no 'fresh' bonus", repost_score == old_score, f"{repost_score}
 
 
 print("\n━━━ Junior Filter Tests ━━━")
-from rn_linkedin_scraper import filter_junior, is_junior
+from job_hunter.rn_linkedin_scraper import filter_junior, is_junior
 for title in ["Junior React Native Developer", "Jr. Mobile Engineer", "React Native Dev (Jr)",
               "Entry-Level React Native Developer", "React Native Intern", "Desenvolvedor Júnior React Native",
               "Graduate Mobile Engineer"]:
@@ -278,7 +278,7 @@ test("filter_junior keeps only non-junior",
 
 
 print("\n━━━ Post Apply Link Tests ━━━")
-from rn_linkedin_scraper import find_apply_email, find_apply_link
+from job_hunter.rn_linkedin_scraper import find_apply_email, find_apply_link
 test("ATS link beats company site",
      find_apply_link("We're hiring! Site: https://acme.com Apply: https://jobs.lever.co/acme/1 #reactnative")
      == "https://jobs.lever.co/acme/1")

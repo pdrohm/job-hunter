@@ -20,8 +20,8 @@ from fastapi import Cookie, FastAPI, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from rn_linkedin_scraper import run_scraper_with_progress, TIME_RANGES, DEFAULT_TIME_RANGE, ALL_ENGINES
-from tech_profiles import get_profile_summary
+from job_hunter.rn_linkedin_scraper import run_scraper_with_progress, TIME_RANGES, DEFAULT_TIME_RANGE, ALL_ENGINES
+from job_hunter.tech_profiles import get_profile_summary
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/app/data"))
 

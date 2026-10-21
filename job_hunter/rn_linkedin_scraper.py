@@ -7,10 +7,10 @@ Applies strict geographic filtering to exclude India-related results.
 Returns a curated, ranked feed of opportunities.
 
 Usage:
-    python rn_linkedin_scraper.py                    # Run with defaults
-    python rn_linkedin_scraper.py --output results.json  # Save to file
-    python rn_linkedin_scraper.py --format html      # Generate HTML report
-    python rn_linkedin_scraper.py --max-results 50   # Limit results
+    python -m job_hunter.rn_linkedin_scraper                    # Run with defaults
+    python -m job_hunter.rn_linkedin_scraper --output results.json  # Save to file
+    python -m job_hunter.rn_linkedin_scraper --format html      # Generate HTML report
+    python -m job_hunter.rn_linkedin_scraper --max-results 50   # Limit results
 """
 
 import argparse
@@ -33,7 +33,7 @@ from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-import focus
+from job_hunter import focus
 
 # ─────────────────────────────────────────────
 # Configuration
@@ -1830,7 +1830,7 @@ def run_scraper_with_progress(
         top_markets_only: keep only jobs from US / Canada / Europe companies,
                    and only real React Native / Expo roles (strict tech match).
     """
-    from tech_profiles import TECH_PROFILES
+    from job_hunter.tech_profiles import TECH_PROFILES
 
     cb = on_progress or (lambda e: None)
 
@@ -1883,7 +1883,7 @@ def run_scraper_with_progress(
     post_browser = {}  # one logged-in Chrome for all LinkedIn post searches
 
     def scrape_linkedin_posts(s, q):
-        import linkedin_posts
+        from job_hunter import linkedin_posts
         if "search" not in post_browser:
             ok, reason = linkedin_posts.is_available()
             if not ok:

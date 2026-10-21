@@ -1,6 +1,6 @@
 # Candidate profile
-<!-- Copy to apply/profile.md and fill in. Claude uses ONLY what is written here.
-     apply/profile.md and apply/resume.pdf are git-ignored (personal data). -->
+<!-- Copy to apply_bot/apply/profile.md and fill in. Claude uses ONLY what is written here.
+     apply_bot/apply/profile.md and apply_bot/apply/resume.pdf are git-ignored (personal data). -->
 
 ## Contact
 - Full name:

@@ -1,21 +1,71 @@
 # job-hunter
 
+A home for small personal bots. Each bot lives in its own folder (a Python
+package) and runs from the repo root with `python -m <folder>.<module>`.
+
+| Folder | What it does | Run |
+|---|---|---|
+| `job_hunter/` | LinkedIn job scraper, watcher that sends new jobs to Telegram, LinkedIn posts search, web UI (`app.py`) | `python -m job_hunter.watcher` |
+| `apply_bot/` | Telegram → Claude Code bot that fills job applications. Its private data is in `apply_bot/apply/` (git-ignored) | `python -m apply_bot.apply_bot` |
+| `daily/` | Morning brief and interview prep bots | `python -m daily.morning_brief`, `python -m daily.interview_prep` |
+| `whatsapp_summary/` | Reads WhatsApp Web chats (read-only), transcribes voice messages on the Mac and summarizes each chat with Claude into an HTML page | `python -m whatsapp_summary.web` (page at http://127.0.0.1:8765) |
+| `shared/` | Code that all bots use: the Telegram client (`shared/telegram.py`) | — |
+| `manager/` | Bots Manager: a macOS menu bar app (Swift) to see, start, stop and restart the bots and other local sites | `sh manager/build_app.sh` |
+
+`scripts/` has the macOS launchd installers. `.env` (one file, at the repo root) holds the settings for all bots.
+Runtime data: `data/` (job watcher), `~/.job-hunter/` (apply bot, daily bots, logs).
+
+Tests: `.venv/bin/python -m pytest -q` (each `<folder>/test_*.py` is a script; run one with
+`.venv/bin/python -m job_hunter.test_scraper`).
+
+### Add a new bot
+
+1. Make a folder with an empty `__init__.py`, e.g. `my_bot/__init__.py` and `my_bot/my_bot.py`.
+2. Import other code by package: `from shared import telegram` (send with `telegram.send_message(text, token=...)`).
+   Give the bot its own @BotFather token in `.env` so its messages stay apart.
+3. Run it from the repo root: `.venv/bin/python -m my_bot.my_bot`. Load `.env` with `load_dotenv()`.
+4. Tests: `my_bot/test_my_bot.py` (same script style; pytest finds it).
+5. To run it on the Mac, copy a script in `scripts/` and use `-m my_bot.my_bot` with `WorkingDirectory` = repo root.
+6. To see it in Bots Manager, add it to `~/.bots-manager/services.json` (below).
+
+## Bots Manager (menu bar app)
+
+One menu bar icon to see all bots and local sites: status (green running, blue scheduled,
+orange paused, red failed), start, stop/pause, restart, open the site, the log and the folder.
+Needs Xcode (Swift 6) on macOS 14+.
+
+1. `sh manager/build_app.sh` builds `~/Applications/Bots Manager.app` and opens it.
+   Turn on **Abrir ao iniciar o Mac** in its window to start it at login.
+2. Your services are in `~/.bots-manager/services.json` (outside the repo; **Editar serviços** opens it).
+   Start from `manager/services.example.json`. The app reloads the file when it changes.
+
+Kinds of service:
+- `launchd`: a LaunchAgent (`label`). Start = load + run, Pause = unload (the plist stays), Restart = `kickstart -k`.
+- `command`: any shell line (`command`, `cwd`, `env`), run with `zsh -lc` apart from the app, so it keeps
+  running when you quit the app. PID in `~/.bots-manager/run/`, output in `~/.bots-manager/logs/<id>.log`.
+  Optional `stop_command`.
+- `docker`: `compose_file` → `docker compose up -d` / `down`.
+
+`url` is the site to open; it is also checked (HTTP 2xx/3xx = up; `health_url` to check another path).
+CLI with the same logic: `manager/.build/release/bots-manager status | start <id> | stop <id> | restart <id> | log <id>`
+(`--config FILE` for another file). Tests: `cd manager && swift test`.
+
 ## Telegram alerts for new jobs
 
 1. On Telegram, talk to [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token.
 2. Send any message to your new bot.
 3. `cp .env.example .env` and put the token in `TELEGRAM_BOT_TOKEN`.
-4. `python notifier.py --get-chat-id` and put the number in `TELEGRAM_CHAT_ID`.
-5. `python notifier.py --test` — you should get a message.
+4. `python -m job_hunter.notifier --get-chat-id` and put the number in `TELEGRAM_CHAT_ID`.
+5. `python -m job_hunter.notifier --test` — you should get a message.
 6. `docker compose up -d watcher` — checks every 2 hours and sends only new jobs.
 
-Try it without sending: `python watcher.py --dry-run`. One run only: `python watcher.py --once`.
+Try it without sending: `python -m job_hunter.watcher --dry-run`. One run only: `python -m job_hunter.watcher --once`.
 
 ### Focus: remote, no sponsorship, contractor
 
 By default the watcher:
 - searches LinkedIn jobs in `Worldwide`, `Latin America` and `Brazil` (`WATCH_LOCATIONS`);
-- drops jobs that need US/UK/EU work authorization, citizenship, a clearance or visa sponsorship (rules in `focus.py`; turn off with `WATCH_ALLOW_SPONSORSHIP=true`);
+- drops jobs that need US/UK/EU work authorization, citizenship, a clearance or visa sponsorship (rules in `job_hunter/focus.py`; turn off with `WATCH_ALLOW_SPONSORSHIP=true`);
 - ranks higher jobs open to people abroad (worldwide, LATAM, contractor, B2B, PJ, Deel) and lower remote jobs pinned to one foreign country;
 - drops junior, entry level and intern roles (title or LinkedIn seniority; turn off with `WATCH_ALLOW_JUNIOR=true`);
 - keeps only React Native / Expo roles: the words must be in the job's title, or be the main stack in its own text (a "React Native is a plus" web job fails);
@@ -31,8 +81,8 @@ the last 24 hours, newest first. That search needs a logged-in account, so it ru
 in a separate Chrome on your Mac, not on GitHub (GitHub sends jobs only).
 
 1. `.venv/bin/pip install -r requirements-posts.txt`
-2. `.venv/bin/python linkedin_posts.py --login` and log in to LinkedIn in the Chrome that opens (once).
-3. Test: `WATCH_ENGINES=linkedin_posts .venv/bin/python watcher.py --dry-run`
+2. `.venv/bin/python -m job_hunter.linkedin_posts --login` and log in to LinkedIn in the Chrome that opens (once).
+3. Test: `WATCH_ENGINES=linkedin_posts .venv/bin/python -m job_hunter.watcher --dry-run`
 4. Run it every 2 hours: `sh scripts/install_posts_watcher_mac.sh`
 
 The bot reads each post, drops people looking for work (#opentowork), and keeps
@@ -50,10 +100,10 @@ send is always the ✅ button.
 Claude opens the job in a separate Chrome, fills the form, and sends you a screenshot
 plus the answers it wrote. **Nothing is sent until you tap ✅ Enviar** — except auto-apply below.
 
-1. `cp apply/profile.example.md apply/profile.md` and fill it in (Claude uses only this).
-2. Put your CV at `apply/resume.pdf`. Recruiters see the file name: to use another one
-   (e.g. `apply/YourName-resume.pdf`), set `APPLY_RESUME=apply/YourName-resume.pdf` in `.env`.
-3. Test it: `.venv/bin/python apply_bot.py`, then send `/candidatar <link>` on Telegram.
+1. `cp apply_bot/apply/profile.example.md apply_bot/apply/profile.md` and fill it in (Claude uses only this).
+2. Put your CV at `apply_bot/apply/resume.pdf`. Recruiters see the file name: to use another one
+   (e.g. `apply_bot/apply/YourName-resume.pdf`), set `APPLY_RESUME=apply_bot/apply/YourName-resume.pdf` in `.env`.
+3. Test it: `.venv/bin/python -m apply_bot.apply_bot`, then send `/candidatar <link>` on Telegram.
 4. Start it at login: `sh scripts/install_apply_bot_mac.sh`
 5. Optional, voice messages: `brew install whisper-cpp ffmpeg`, then download the model:
    `curl -L -o ~/.job-hunter/whisper/ggml-large-v3-turbo-q5_0.bin --create-dirs https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin`.
@@ -82,12 +132,12 @@ only file it can upload is your CV. History: `~/.job-hunter/applications.jsonl`.
 
 Two more Telegram bots, each with its own token, so their messages stay out of the job alerts.
 
-- **Morning brief** (`morning_brief.py`), every day at 08:00: today's calendar (interviews marked 🎯),
+- **Morning brief** (`daily/morning_brief.py`), every day at 08:00: today's calendar (interviews marked 🎯),
   weather, dollar rate, unread important Gmail, and applications sent in the last 24 h.
   Each part is optional: no config, no part.
-- **Interview prep** (`interview_prep.py`), checks every 10 minutes: about 60 minutes before an
+- **Interview prep** (`daily/interview_prep.py`), checks every 10 minutes: about 60 minutes before an
   interview, Claude Code searches the company on the web and sends a prep note (company, role,
-  which stories from `apply/profile.md` to tell, likely questions, questions to ask).
+  which stories from `apply_bot/apply/profile.md` to tell, likely questions, questions to ask).
   Two Claude runs, so an invite with hidden instructions cannot leak your data: the research run
   has only WebSearch/WebFetch and never sees your profile; the run that writes the note sees your
   profile but has no tools. An event is an interview when its title or description has a word
@@ -98,5 +148,31 @@ Setup:
 1. Make two bots with @BotFather. Send any message to each one.
 2. Fill the "Daily bots" part of `.env` (see `.env.example`). The calendar link is the
    Google Calendar "Secret address in iCal format". Keep it secret.
-3. Try them: `python morning_brief.py --dry-run` and `python interview_prep.py --next --dry-run`.
+3. Try them: `python -m daily.morning_brief --dry-run` and `python -m daily.interview_prep --next --dry-run`.
 4. Install: `sh scripts/install_daily_bots_mac.sh` (change the time with `MORNING_HOUR=7 MORNING_MINUTE=30`).
+
+## WhatsApp summary (on your Mac)
+
+Reads chats on WhatsApp Web in its own Chrome profile, transcribes the voice
+messages with whisper.cpp (the audio never leaves the Mac), and asks Claude
+(no tools) for a short summary of each chat: what happened, what people ask
+of you, and what was decided. The result is one HTML page with a card per
+chat: `~/.job-hunter/whatsapp/index.html` (it opens when the run ends).
+
+1. `.venv/bin/pip install -r requirements-posts.txt` (Playwright) and the voice setup of the apply bot (whisper.cpp, ffmpeg, model).
+2. `.venv/bin/python -m whatsapp_summary.summary --login` and scan the QR code on your phone
+   (WhatsApp → Settings → Linked devices). Once.
+3. Use the page: `sh scripts/install_whatsapp_web_mac.sh` keeps it running at <http://127.0.0.1:8765>
+   (or run it once: `.venv/bin/python -m whatsapp_summary.web`). Pick a chat or "Todas não lidas", the start
+   time and the options, and press **Resumir**: you see the progress, and the summaries show on the same page.
+   The page only listens on this Mac and runs one summary at a time. "Conectar (QR code)" links WhatsApp again.
+4. Or run it from the terminal:
+   - `.venv/bin/python -m whatsapp_summary.summary --chat "Group name" --since "ontem 20:54"`
+   - `.venv/bin/python -m whatsapp_summary.summary --chat "A" --chat "B"`: since the last run of each chat (or 24h)
+   - `.venv/bin/python -m whatsapp_summary.summary --unread`: every chat with unread messages (muted chats only with `--include-muted`)
+   - `--telegram` also sends each summary to Telegram (`WA_BOT_TOKEN`, or the job bot), `--no-audio` skips voice,
+     `--transcript-only` skips Claude, `--show` shows Chrome, `--report` only rebuilds the page.
+
+`--since` takes `12h`, `2d`, `20:54`, `ontem 20:54`, `15/10 20:54` or `2026-10-15 20:54`.
+It never types or sends. But a chat it opens is marked as read on your phone, and a voice message it
+reads is marked as played (it plays muted). Chats, transcripts and summaries stay in `~/.job-hunter/whatsapp/`.

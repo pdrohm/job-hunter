@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 .git/
 .venv/
+.env
+apply_bot/apply/profile.md
+apply_bot/apply/*.pdf
+apply_bot/apply/memory.json

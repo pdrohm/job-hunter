@@ -10,9 +10,9 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-import apply_bot
-import notifier
-from apply_bot import (AnswerMemory, ApplyBot, ClaudeResult, Config, _parse_intent, build_claude_cmd,
+from apply_bot import apply_bot
+from job_hunter import notifier
+from apply_bot.apply_bot import (AnswerMemory, ApplyBot, ClaudeResult, Config, _parse_intent, build_claude_cmd,
                        build_intent_cmd, extract_url, format_report, parse_report)
 
 PASS = "✓"
@@ -120,9 +120,9 @@ test("No URL", extract_url("/candidatar") == "")
 # ─────────────────────────────────────────────
 print("\n━━━ Flow Tests ━━━")
 
-with mock.patch("apply_bot.ensure_chrome"), \
-        mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.run_claude") as rc:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), \
+        mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc:
     bot = SyncBot(cfg)
 
     bot.handle_update(update_msg("/candidatar"))
@@ -158,9 +158,9 @@ with mock.patch("apply_bot.ensure_chrome"), \
 
     bot.handle_update(update_cb(f"edit:{app.id}"))
     test("Edit hint says voice and notes work", "áudio" in bot.said[-1][0] and "LLMs" in bot.said[-1][0])
-    notes = "describe the API of pelvtime and I implemented LLMs all the time, using skills and the best practices"
-    with mock.patch("apply_bot.voice_problem", return_value=""), \
-            mock.patch("apply_bot.transcribe_voice", return_value=notes):
+    notes = "describe the API of my app and I implemented LLMs all the time, using skills and the best practices"
+    with mock.patch("apply_bot.apply_bot.voice_problem", return_value=""), \
+            mock.patch("apply_bot.apply_bot.transcribe_voice", return_value=notes):
         bot.handle_update({"update_id": 9, "message": {"chat": {"id": 42},
                                                         "voice": {"file_id": "v9", "duration": 8}}})
     test("Voice notes during Corrigir go to Claude", notes in bot.prompts[-1], bot.prompts[-1][:200])
@@ -220,9 +220,9 @@ class InlineThread:
         self.target(*self.args)
 
 
-with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.threading.Thread", InlineThread), \
-        mock.patch("apply_bot.run_claude") as rc, mock.patch("apply_bot.classify_intent") as ci:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.threading.Thread", InlineThread), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc, mock.patch("apply_bot.apply_bot.classify_intent") as ci:
     bot = SyncBot(cfg)
     rc.return_value = fake_result("ready")
 
@@ -269,10 +269,10 @@ with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"
 # ─────────────────────────────────────────────
 print("\n━━━ Pause / Idle Tests ━━━")
 
-with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.threading.Thread", InlineThread), \
-        mock.patch("apply_bot.close_chrome") as close, mock.patch("apply_bot.chrome_running", return_value=True), \
-        mock.patch("apply_bot.run_claude") as rc, mock.patch("apply_bot.classify_intent") as ci:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.threading.Thread", InlineThread), \
+        mock.patch("apply_bot.apply_bot.close_chrome") as close, mock.patch("apply_bot.apply_bot.chrome_running", return_value=True), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc, mock.patch("apply_bot.apply_bot.classify_intent") as ci:
     rc.return_value = fake_result("ready")
     bot = SyncBot(cfg)
     bot.handle_update(update_msg("/pausar"))
@@ -311,7 +311,7 @@ with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"
     bot.app = None
 
 
-with mock.patch("apply_bot.subprocess.run") as run:
+with mock.patch("apply_bot.apply_bot.subprocess.run") as run:
     apply_bot.close_chrome(cfg)
     args = run.call_args.args[0]
 test("pkill pattern is not read as an option", args[:3] == ["pkill", "-f", "--"], str(args))
@@ -321,7 +321,7 @@ test("pkill only targets the bot's Chrome profile", args[3] == f"--user-data-dir
 def fake_get(body):
     resp = mock.Mock()
     resp.json.return_value = body
-    return mock.patch("apply_bot.requests.get", return_value=resp)
+    return mock.patch("apply_bot.apply_bot.requests.get", return_value=resp)
 
 
 real_chrome = {"Browser": "Chrome/155.0.8059.40", "webSocketDebuggerUrl": "ws://127.0.0.1:9333/devtools/browser/x"}
@@ -329,7 +329,7 @@ with fake_get(real_chrome):
     test("Real Chrome counts as running", apply_bot.chrome_running(cfg))
 with fake_get({"error": "not chrome"}):
     test("Other program on the port is not Chrome", not apply_bot.chrome_running(cfg))
-with mock.patch("apply_bot.requests.get", side_effect=apply_bot.requests.ConnectionError()):
+with mock.patch("apply_bot.apply_bot.requests.get", side_effect=apply_bot.requests.ConnectionError()):
     test("Closed port is not Chrome", not apply_bot.chrome_running(cfg))
 
 auto = Config(**{**cfg.__dict__, "chrome_port": 0})
@@ -341,13 +341,13 @@ port_file.parent.mkdir(parents=True, exist_ok=True)
 port_file.write_text("54321\n/devtools/browser/x\n")
 test("Auto port read from DevToolsActivePort", apply_bot.chrome_endpoint(auto) == "http://127.0.0.1:54321")
 
-with mock.patch("apply_bot.subprocess.Popen") as popen, mock.patch("apply_bot.time.sleep"), \
-        mock.patch("apply_bot.chrome_running", side_effect=[False, False, True]):
+with mock.patch("apply_bot.apply_bot.subprocess.Popen") as popen, mock.patch("apply_bot.apply_bot.time.sleep"), \
+        mock.patch("apply_bot.apply_bot.chrome_running", side_effect=[False, False, True]):
     apply_bot.ensure_chrome(auto)
     launch = popen.call_args.args[0]
 test("Chrome starts with a free port", "--remote-debugging-port=0" in launch, str(launch))
 test("Stale port file removed before start", not port_file.exists())
-with mock.patch("apply_bot.subprocess.Popen") as popen, mock.patch("apply_bot.chrome_running", return_value=True):
+with mock.patch("apply_bot.apply_bot.subprocess.Popen") as popen, mock.patch("apply_bot.apply_bot.chrome_running", return_value=True):
     apply_bot.ensure_chrome(auto)
 test("Running Chrome is reused", not popen.called)
 
@@ -361,9 +361,9 @@ def update_voice(duration=5, chat_id=42):
                                          "voice": {"file_id": "v1", "duration": duration}}}
 
 
-with mock.patch("apply_bot.voice_problem", return_value=""), \
-        mock.patch("apply_bot.transcribe_voice", return_value="como tá?") as tv, \
-        mock.patch("apply_bot.notifier.call"):
+with mock.patch("apply_bot.apply_bot.voice_problem", return_value=""), \
+        mock.patch("apply_bot.apply_bot.transcribe_voice", return_value="como tá?") as tv, \
+        mock.patch("shared.telegram.call"):
     bot = SyncBot(cfg)
     with mock.patch.object(bot, "handle_text") as ht:
         bot.handle_update(update_voice())
@@ -390,8 +390,8 @@ with mock.patch("apply_bot.voice_problem", return_value=""), \
     bot.handle_update(update_voice(chat_id=99))
     test("Voice from strangers is ignored", not tv.called and not bot.said)
 
-with mock.patch("apply_bot.voice_problem", return_value="whisper-cli não está instalado"), \
-        mock.patch("apply_bot.transcribe_voice") as tv, mock.patch("apply_bot.notifier.call"):
+with mock.patch("apply_bot.apply_bot.voice_problem", return_value="whisper-cli não está instalado"), \
+        mock.patch("apply_bot.apply_bot.transcribe_voice") as tv, mock.patch("shared.telegram.call"):
     bot = SyncBot(cfg)
     bot.handle_update(update_voice())
     test("Missing whisper is explained", not tv.called and "whisper-cli" in bot.said[-1][0])
@@ -414,19 +414,19 @@ def fake_run(cmd, **kw):
 
 
 audio = mock.Mock(content=b"OggS fake")
-with mock.patch("apply_bot.notifier.call", return_value={"result": {"file_path": "voice/f.oga"}}), \
-        mock.patch("apply_bot.notifier._token", return_value="T"), \
-        mock.patch("apply_bot.requests.get", return_value=audio), \
-        mock.patch("apply_bot.subprocess.run", side_effect=fake_run):
+with mock.patch("shared.telegram.call", return_value={"result": {"file_path": "voice/f.oga"}}), \
+        mock.patch("shared.telegram._token", return_value="T"), \
+        mock.patch("apply_bot.apply_bot.requests.get", return_value=audio), \
+        mock.patch("apply_bot.apply_bot.subprocess.run", side_effect=fake_run):
     text = apply_bot.transcribe_voice(cfg, "v1")
 test("Transcript is cleaned", text == "muda o salário para 7k", text)
 test("Audio folder deleted after use", seen_dirs and not seen_dirs[0].exists())
 
 seen_dirs.clear()
-with mock.patch("apply_bot.notifier.call", return_value={"result": {"file_path": "voice/f.oga"}}), \
-        mock.patch("apply_bot.notifier._token", return_value="T"), \
-        mock.patch("apply_bot.requests.get", return_value=audio), \
-        mock.patch("apply_bot.subprocess.run", side_effect=[mock.Mock(), apply_bot.subprocess.CalledProcessError(1, "w")]) as run:
+with mock.patch("shared.telegram.call", return_value={"result": {"file_path": "voice/f.oga"}}), \
+        mock.patch("shared.telegram._token", return_value="T"), \
+        mock.patch("apply_bot.apply_bot.requests.get", return_value=audio), \
+        mock.patch("apply_bot.apply_bot.subprocess.run", side_effect=[mock.Mock(), apply_bot.subprocess.CalledProcessError(1, "w")]) as run:
     try:
         apply_bot.transcribe_voice(cfg, "v1")
     except apply_bot.subprocess.CalledProcessError:
@@ -434,9 +434,9 @@ with mock.patch("apply_bot.notifier.call", return_value={"result": {"file_path":
     wav_dir = Path(run.call_args_list[0].args[0][-1]).parent
 test("Audio folder deleted on error too", not wav_dir.exists())
 
-with mock.patch("apply_bot.notifier.call", return_value={"result": {"file_path": "voice/f.oga"}}), \
-        mock.patch("apply_bot.notifier._token", return_value="SECRET"), \
-        mock.patch("apply_bot.requests.get", side_effect=apply_bot.requests.ConnectionError("https://x/botSECRET/f")):
+with mock.patch("shared.telegram.call", return_value={"result": {"file_path": "voice/f.oga"}}), \
+        mock.patch("shared.telegram._token", return_value="SECRET"), \
+        mock.patch("apply_bot.apply_bot.requests.get", side_effect=apply_bot.requests.ConnectionError("https://x/botSECRET/f")):
     try:
         apply_bot.transcribe_voice(cfg, "v1")
         err = ""
@@ -449,8 +449,8 @@ test("Download error hides the bot token", err and "SECRET" not in err, err)
 print("\n━━━ Restart Tests ━━━")
 
 rcfg = Config(**{**cfg.__dict__, "home": Path(tempfile.mkdtemp())})
-with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.run_claude") as rc:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc:
     bot = SyncBot(rcfg)
     rc.return_value = fake_result("ready")
     bot.handle_update(update_msg("/candidatar https://jobs.example.com/initech/1"))
@@ -460,13 +460,13 @@ with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"
     test("Open application saved to disk", bot.app_path.exists())
     old_id = bot.app.id
 
-with mock.patch("apply_bot.chrome_running", return_value=True):
+with mock.patch("apply_bot.apply_bot.chrome_running", return_value=True):
     bot2 = SyncBot(rcfg)
     bot2.restore_app()
 test("Restart brings the application back", bot2.app and bot2.app.id == old_id and bot2.app.session_id == "sess-9")
 test("Owner is told, with review buttons", "Reiniciei" in bot2.said[-1][0] and "Initech" in bot2.said[-1][0]
      and bot2.said[-1][1]["inline_keyboard"][0][0]["callback_data"] == f"submit:{old_id}")
-with mock.patch("apply_bot.run_claude") as rc, mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"):
+with mock.patch("apply_bot.apply_bot.run_claude") as rc, mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"):
     rc.return_value = fake_result("ready", screenshot="review-2.png")
     bot2.handle_update(update_cb(f"edit:{old_id}"))
     test("Old buttons work after restart", bot2.app.stage == "editing")
@@ -475,16 +475,16 @@ with mock.patch("apply_bot.run_claude") as rc, mock.patch("apply_bot.ensure_chro
 
 bot2.app.stage = "submitting"
 bot2.save_app()
-with mock.patch("apply_bot.chrome_running", return_value=True):
+with mock.patch("apply_bot.apply_bot.chrome_running", return_value=True):
     bot3 = SyncBot(rcfg)
     bot3.restore_app()
 test("Restart during submit: warn, never auto-submit", bot3.app.stage == "review" and "envio" in bot3.said[-1][0])
-with mock.patch("apply_bot.chrome_running", return_value=False):
+with mock.patch("apply_bot.apply_bot.chrome_running", return_value=False):
     bot4 = SyncBot(rcfg)
     bot4.restore_app()
 test("Chrome gone: says the form is lost", "fechou" in bot4.said[-1][0])
 
-with mock.patch("apply_bot.notifier.call"):
+with mock.patch("shared.telegram.call"):
     bot4.handle_update(update_msg("/cancelar"))
 test("Cancel removes the saved application", not bot4.app_path.exists())
 bot5 = SyncBot(rcfg)
@@ -498,28 +498,28 @@ test("Broken file is dropped", bot5.app is None and not bot5.app_path.exists())
 # ─────────────────────────────────────────────
 print("\n━━━ Search / History Tests ━━━")
 
-with mock.patch("apply_bot.notifier.call"), mock.patch("apply_bot.threading.Thread") as thread:
+with mock.patch("shared.telegram.call"), mock.patch("apply_bot.apply_bot.threading.Thread") as thread:
     bot = SyncBot(cfg)
     bot.handle_update(update_msg("/procurar"))
     test("/procurar starts a background search", thread.called and bot.searching and "Procurando" in bot.said[-1][0])
     bot.handle_update(update_msg("/procurar"))
     test("Only one search at a time", thread.call_count == 1 and "Já estou procurando" in bot.said[-1][0])
 
-import job_search  # noqa: E402
-from rn_linkedin_scraper import Opportunity  # noqa: E402
+from job_hunter import job_search  # noqa: E402
+from job_hunter.rn_linkedin_scraper import Opportunity  # noqa: E402
 
 opp = Opportunity(title="RN", result_type="job", company_or_author="Acme", location="Remote",
                   url="https://www.linkedin.com/jobs/view/900/", snippet="", relevance_score=90, job_id="900")
-with mock.patch("job_search.run", return_value=([opp], [opp], 30)), \
-        mock.patch("apply_bot.notifier.notify_new") as nn:
+with mock.patch("job_hunter.job_search.run", return_value=([opp], [opp], 30)), \
+        mock.patch("job_hunter.notifier.notify_new") as nn:
     bot.run_search()
 headers = [c.kwargs["header"] for c in nn.call_args_list]
 test("New and again sent apart", len(headers) == 2 and "com match" in headers[0] and "🔁" in headers[1], str(headers))
 test("Search flag cleared", not bot.searching)
-with mock.patch("job_search.run", return_value=([], [], 30)), mock.patch("apply_bot.notifier.notify_new") as nn:
+with mock.patch("job_hunter.job_search.run", return_value=([], [], 30)), mock.patch("job_hunter.notifier.notify_new") as nn:
     bot.run_search()
 test("Nothing found is told", not nn.called and "Nenhuma nova" in bot.said[-1][0])
-with mock.patch("job_search.run", side_effect=RuntimeError("linkedin down")):
+with mock.patch("job_hunter.job_search.run", side_effect=RuntimeError("linkedin down")):
     bot.run_search()
 test("Search error is told and cleared", "falhou" in bot.said[-1][0] and not bot.searching)
 
@@ -540,7 +540,7 @@ test("Button removes the job", "Tirei do histórico" in bot.said[-1][0] and job_
 bot.handle_update(update_cb(data))
 test("Second tap is harmless", "já não está" in bot.said[-1][0])
 
-with mock.patch("apply_bot.notifier.call"), mock.patch("apply_bot.classify_intent") as ci:
+with mock.patch("shared.telegram.call"), mock.patch("apply_bot.apply_bot.classify_intent") as ci:
     bot = SyncBot(cfg)
     with mock.patch.object(bot, "start_search") as ss, mock.patch.object(bot, "show_applied") as sa:
         ci.return_value = {"action": "search"}
@@ -559,8 +559,8 @@ test("Correction saved from ✏️ Corrigir", any("6000 USD" in c["text"] for c 
 test("Correction keeps the company", history["corrections"][0]["company"] == "Kraken")
 test("Submitted answers saved", any(a["question"] == "Why?" for a in history["answers"]))
 
-with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.run_claude") as rc:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc:
     bot = SyncBot(cfg)  # fresh bot = memory loaded from disk
     rc.return_value = fake_result("ready")
     bot.handle_update(update_msg("/candidatar https://x.com/next"))
@@ -596,7 +596,7 @@ test("Prompt respects Do not claim", "Do not claim" in sp)
 # ─────────────────────────────────────────────
 print("\n━━━ Auto-apply Tests ━━━")
 
-from rn_linkedin_scraper import Opportunity as _Opp, ResultType as _RT
+from job_hunter.rn_linkedin_scraper import Opportunity as _Opp, ResultType as _RT
 
 
 def auto_opp(url, score):
@@ -607,8 +607,8 @@ def auto_opp(url, score):
 
 
 acfg = Config(**{**cfg.__dict__, "home": tmp / "auto-home"})
-with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.run_claude") as rc:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc:
     bot = SyncBot(acfg)
     bot.queue_auto([auto_opp("https://www.linkedin.com/jobs/view/1111111111/", 100),
                     auto_opp("https://www.linkedin.com/jobs/view/2222222222/", 99)])
@@ -665,7 +665,7 @@ with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"
 # ─────────────────────────────────────────────
 print("\n━━━ Notifier Button Tests ━━━")
 
-from rn_linkedin_scraper import Opportunity, ResultType
+from job_hunter.rn_linkedin_scraper import Opportunity, ResultType
 
 opps = [
     Opportunity(title="React Native Engineer at a very long company name", result_type=ResultType.JOB,
@@ -717,8 +717,8 @@ test("No apply link → bot opens the post",
      apply_bot.post_apply_url(tg_message(notifier.format_opportunity(post, 3))) == post.url)
 test("Old message without links → empty", apply_bot.post_apply_url({"date": 0}) == "")
 
-with mock.patch("apply_bot.ensure_chrome"), mock.patch("apply_bot.notifier.call"), \
-        mock.patch("apply_bot.run_claude") as rc:
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegram.call"), \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc:
     bot = SyncBot(cfg)
     rc.return_value = fake_result("ready")
     post.apply_url = "https://jobs.ashbyhq.com/acme/9"

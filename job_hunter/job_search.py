@@ -20,8 +20,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from rn_linkedin_scraper import Opportunity, dedup_key, extract_linkedin_job_id
-from watcher import SeenStore, _env, _env_list, scrape
+from job_hunter.rn_linkedin_scraper import Opportunity, dedup_key, extract_linkedin_job_id
+from job_hunter.watcher import SeenStore, _env, _env_list, scrape
 
 APPLICATIONS_FILE = "applications.jsonl"
 

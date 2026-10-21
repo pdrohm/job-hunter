@@ -1,5 +1,5 @@
 #!/bin/sh
-# Start apply_bot.py automatically when you log in to your Mac (launchd).
+# Start the apply bot (apply_bot/apply_bot.py) automatically when you log in to your Mac (launchd).
 # Uninstall: launchctl unload ~/Library/LaunchAgents/com.jobhunter.applybot.plist && rm that file
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,9 +8,9 @@ PLIST="$HOME/Library/LaunchAgents/com.jobhunter.applybot.plist"
 LOG="$HOME/.job-hunter/apply_bot.log"
 
 [ -x "$PY" ] || { echo "Missing $PY. Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"; exit 1; }
-[ -f "$REPO/apply/profile.md" ] || { echo "Missing apply/profile.md (copy apply/profile.example.md)"; exit 1; }
-# Any PDF in apply/ (point APPLY_RESUME in .env to it if it isn't apply/resume.pdf)
-ls "$REPO"/apply/*.pdf >/dev/null 2>&1 || { echo "Missing your resume PDF in apply/"; exit 1; }
+[ -f "$REPO/apply_bot/apply/profile.md" ] || { echo "Missing apply_bot/apply/profile.md (copy apply_bot/apply/profile.example.md)"; exit 1; }
+# Any PDF in apply_bot/apply/ (point APPLY_RESUME in .env to it if it isn't apply_bot/apply/resume.pdf)
+ls "$REPO"/apply_bot/apply/*.pdf >/dev/null 2>&1 || { echo "Missing your resume PDF in apply_bot/apply/"; exit 1; }
 mkdir -p "$HOME/.job-hunter" "$HOME/Library/LaunchAgents"
 
 # launchd has a minimal PATH; claude and npx need theirs
@@ -26,7 +26,7 @@ cat > "$PLIST" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.jobhunter.applybot</string>
-  <key>ProgramArguments</key><array><string>$PY</string><string>$REPO/apply_bot.py</string></array>
+  <key>ProgramArguments</key><array><string>$PY</string><string>-m</string><string>apply_bot.apply_bot</string></array>
   <key>WorkingDirectory</key><string>$REPO</string>
   <key>EnvironmentVariables</key><dict><key>PATH</key><string>$PATH_VALUE</string></dict>
   <key>RunAtLoad</key><true/>

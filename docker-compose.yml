@@ -9,7 +9,7 @@ services:
 
   watcher:
     build: .
-    command: ["python", "watcher.py"]
+    command: ["python", "-m", "job_hunter.watcher"]
     env_file: .env
     environment:
       DATA_DIR: /app/data

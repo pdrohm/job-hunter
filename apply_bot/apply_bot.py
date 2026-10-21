@@ -50,11 +50,14 @@ from typing import Optional
 import requests
 from dotenv import load_dotenv
 
-import notifier
+from job_hunter import notifier
+from shared import telegram
 
 log = logging.getLogger("apply_bot")
 
-REPO_DIR = Path(__file__).parent
+BOT_DIR = Path(__file__).resolve().parent
+REPO_DIR = BOT_DIR.parent  # .env lives here
+APPLY_DIR = BOT_DIR / "apply"  # profile.md, resume PDF, memory.json (git-ignored)
 PLAYWRIGHT_MCP = "@playwright/mcp@0.0.82"
 CLAUDE_TIMEOUT_SECONDS = 15 * 60
 POLL_TIMEOUT_SECONDS = 50
@@ -261,9 +264,9 @@ class Config:
     def from_env(cls) -> "Config":
         return cls(
             chat_id=_env("TELEGRAM_CHAT_ID", ""),
-            profile_path=Path(_env("APPLY_PROFILE", str(REPO_DIR / "apply" / "profile.md"))).expanduser(),
-            resume_path=Path(_env("APPLY_RESUME", str(REPO_DIR / "apply" / "resume.pdf"))).expanduser(),
-            memory_path=Path(_env("APPLY_MEMORY", str(REPO_DIR / "apply" / "memory.json"))).expanduser(),
+            profile_path=Path(_env("APPLY_PROFILE", str(APPLY_DIR / "profile.md"))).expanduser(),
+            resume_path=Path(_env("APPLY_RESUME", str(APPLY_DIR / "resume.pdf"))).expanduser(),
+            memory_path=Path(_env("APPLY_MEMORY", str(APPLY_DIR / "memory.json"))).expanduser(),
             home=Path(_env("APPLY_HOME", "~/.job-hunter")).expanduser(),
             chrome_port=int(_env("APPLY_CHROME_PORT", "0")),  # 0 = Chrome picks a free port
             chrome_bin=_env("APPLY_CHROME_BIN", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
@@ -284,7 +287,7 @@ class Config:
         if not self.chat_id:
             out.append("TELEGRAM_CHAT_ID is not set")
         if not self.profile_path.exists():
-            out.append(f"Profile not found: {self.profile_path} (copy apply/profile.example.md)")
+            out.append(f"Profile not found: {self.profile_path} (copy apply_bot/apply/profile.example.md)")
         if not self.resume_path.exists():
             out.append(f"Resume not found: {self.resume_path}")
         if not shutil.which(self.claude_bin) and not Path(self.claude_bin).exists():
@@ -315,8 +318,8 @@ def voice_problem(cfg: Config) -> str:
 def transcribe_voice(cfg: Config, file_id: str) -> str:
     """Telegram voice → text. The audio only exists in a temp folder that is
     deleted when this returns, also on errors, so nothing piles up on disk."""
-    info = notifier.call("getFile", {"file_id": file_id})["result"]
-    url = f"https://api.telegram.org/file/bot{notifier._token()}/{info['file_path']}"
+    info = telegram.call("getFile", {"file_id": file_id})["result"]
+    url = f"https://api.telegram.org/file/bot{telegram._token()}/{info['file_path']}"
     with tempfile.TemporaryDirectory(prefix="jobhunter-voice-") as tmp:
         src, wav = Path(tmp) / "voice.oga", Path(tmp) / "voice.wav"
         try:
@@ -549,7 +552,7 @@ def _norm_question(q: str) -> str:
 
 
 class AnswerMemory:
-    """What the candidate taught the bot, saved in apply/memory.json:
+    """What the candidate taught the bot, saved in apply_bot/apply/memory.json:
       - corrections: every ✏️ Corrigir text, with the job it was for
       - answers: the final answers of applications that were SUBMITTED
         (so they already include the corrections)
@@ -657,7 +660,7 @@ def _log_application(cfg: Config, app: Application, status: str):
 
 
 def review_keyboard(app_id: str) -> dict:
-    return notifier.buttons([
+    return telegram.buttons([
         [("✅ Enviar", f"submit:{app_id}"), ("✏️ Corrigir", f"edit:{app_id}")],
         [("❌ Cancelar", f"cancel:{app_id}")],
     ])
@@ -755,7 +758,7 @@ class ApplyBot:
 
     def say(self, text: str, reply_markup: dict = None):
         try:
-            notifier.send_message(text, reply_markup=reply_markup)
+            telegram.send_message(text, reply_markup=reply_markup)
         except RuntimeError as e:
             log.error("Could not send message: %s", e)
 
@@ -770,10 +773,10 @@ class ApplyBot:
             path = images[-1]
         try:
             if len(caption) > 1000:
-                notifier.send_file(str(path))
+                telegram.send_file(str(path))
                 self.say(caption, reply_markup)
             else:
-                notifier.send_file(str(path), caption=caption, reply_markup=reply_markup)
+                telegram.send_file(str(path), caption=caption, reply_markup=reply_markup)
         except RuntimeError as e:
             log.error("Could not send screenshot: %s", e)
             self.say(caption, reply_markup)
@@ -874,7 +877,7 @@ class ApplyBot:
     def route_free_text(self, text: str):
         """Natural language → one bot action. Claude only classifies; it can't act."""
         try:
-            notifier.call("sendChatAction", {"chat_id": self.cfg.chat_id, "action": "typing"})
+            telegram.call("sendChatAction", {"chat_id": self.cfg.chat_id, "action": "typing"})
         except RuntimeError:
             pass
         intent = classify_intent(self.cfg, text, self.state_text())
@@ -923,7 +926,7 @@ class ApplyBot:
 
     def handle_callback(self, cq: dict):
         try:
-            notifier.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
+            telegram.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
         except RuntimeError:
             pass
         data = cq.get("data", "")
@@ -977,7 +980,7 @@ class ApplyBot:
         threading.Thread(target=self.run_search, args=(quiet,), daemon=True).start()
 
     def run_search(self, quiet: bool = False):
-        import job_search  # lazy: the scraper is only loaded when you search
+        from job_hunter import job_search  # lazy: the scraper is only loaded when you search
         try:
             new, again, total = job_search.run(self.cfg.home, mark=not quiet)
             log.info("Search done: %d results, %d new, %d sent again", total, len(new), len(again))
@@ -1002,7 +1005,7 @@ class ApplyBot:
         """Queue the top-score jobs never tried before (sent or cancelled)."""
         if self.cfg.auto_score <= 0:
             return
-        import job_search
+        from job_hunter import job_search
         tried = job_search.tried_keys(self.cfg.home)
         queued = {job_search.url_key(u) for u in self.auto_queue}
         if self.app:
@@ -1038,7 +1041,7 @@ class ApplyBot:
             self.start_search(quiet=True)
 
     def show_applied(self):
-        import job_search
+        from job_hunter import job_search
         rows = job_search.submitted(self.cfg.home)
         if not rows:
             self.say("📋 Ainda não enviei nenhuma candidatura.")
@@ -1051,10 +1054,10 @@ class ApplyBot:
         lines.append("\nToque em 🗑 para tirar uma vaga do histórico (ela pode voltar no /procurar).")
         # Telegram allows 100 buttons; 5 per row keeps them readable
         btns = [(f"🗑 {i}", f"forget:{job_search.short_id(r['url'])}") for i, r in enumerate(rows[:50], 1)]
-        self.say("\n\n".join(lines), notifier.buttons([btns[i:i + 5] for i in range(0, len(btns), 5)]))
+        self.say("\n\n".join(lines), telegram.buttons([btns[i:i + 5] for i in range(0, len(btns), 5)]))
 
     def forget_applied(self, sid: str):
-        import job_search
+        from job_hunter import job_search
         row = job_search.forget(self.cfg.home, sid)
         if not row:
             self.say("Essa vaga já não está no histórico.")
@@ -1261,7 +1264,7 @@ class ApplyBot:
         self.restore_app()
         while True:
             try:
-                data = notifier.call("getUpdates", {
+                data = telegram.call("getUpdates", {
                     "offset": self.offset,
                     "timeout": POLL_TIMEOUT_SECONDS,
                     "allowed_updates": ["message", "callback_query"],
@@ -1302,7 +1305,7 @@ def main():
         raise SystemExit("Fix these first:\n  - " + "\n  - ".join(problems))
     if voice_problem(cfg):
         log.warning("Voice messages off: %s", voice_problem(cfg))
-    if not notifier.is_configured():
+    if not telegram.is_configured():
         raise SystemExit("Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
     ApplyBot(cfg).poll_forever()
 

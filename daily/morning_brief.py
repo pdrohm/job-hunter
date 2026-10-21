@@ -13,7 +13,7 @@ Each part is optional: a part with no config (or that fails) is left out.
 Config (.env):
     MORNING_BOT_TOKEN                 a second bot from @BotFather (required)
     TELEGRAM_CHAT_ID                  same chat ID as the job bot
-    CALENDAR_ICS_URL                  see calendar_feed.py
+    CALENDAR_ICS_URL                  see daily/calendar_feed.py
     MORNING_LAT, MORNING_LON          weather location (Open-Meteo, no key)
     MORNING_CITY                      label for the weather line
     MORNING_CURRENCIES=USD-BRL        AwesomeAPI pairs, comma-separated
@@ -22,9 +22,9 @@ Config (.env):
     MORNING_GMAIL_MAX=8
 
 Run:
-    python morning_brief.py --dry-run     print it, send nothing
-    python morning_brief.py               send it (launchd runs this at 08:00)
-    python morning_brief.py --get-chat-id
+    python -m daily.morning_brief --dry-run     print it, send nothing
+    python -m daily.morning_brief               send it (launchd runs this at 08:00)
+    python -m daily.morning_brief --get-chat-id
 """
 
 import argparse
@@ -43,9 +43,9 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-import calendar_feed
-import notifier
-from interview_prep import is_interview
+from daily import calendar_feed
+from daily.interview_prep import is_interview
+from shared import telegram
 
 log = logging.getLogger("morning_brief")
 
@@ -214,7 +214,7 @@ def main():
 
     token = _env("MORNING_BOT_TOKEN")
     if args.get_chat_id:
-        notifier.print_chat_ids(token=token)
+        telegram.print_chat_ids(token=token)
         return
     text = build_brief()
     if args.dry_run:
@@ -222,7 +222,7 @@ def main():
         return
     if not token:
         sys.exit("Set MORNING_BOT_TOKEN in .env (a new bot from @BotFather).")
-    notifier.send_message(text, token=token)
+    telegram.send_message(text, token=token)
     log.info("Morning brief sent.")
 
 

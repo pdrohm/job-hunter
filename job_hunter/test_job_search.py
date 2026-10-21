@@ -10,9 +10,9 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-import job_search
-from rn_linkedin_scraper import Opportunity
-from watcher import SeenStore
+from job_hunter import job_search
+from job_hunter.rn_linkedin_scraper import Opportunity
+from job_hunter.watcher import SeenStore
 
 PASS = "✓"
 FAIL = "✗"
@@ -84,18 +84,18 @@ test("Cap counts new jobs first", len(new) == 2 and again == [], f"{len(new)} {l
 # ─────────────────────────────────────────────
 print("\n━━━ Run Tests ━━━")
 
-with mock.patch("job_search.scrape", return_value=[job("700", 70), job("500", 90)]) as sc:
+with mock.patch("job_hunter.job_search.scrape", return_value=[job("700", 70), job("500", 90)]) as sc:
     new, again, total = job_search.run(home)
 test("Searches the last week, jobs only", sc.call_args.kwargs == {"time_range": "1w", "engines": ["linkedin"]},
      str(sc.call_args))
 test("First run sends everything with match", {o.job_id for o in new} == {"700", "500"} and total == 2)
-with mock.patch("job_search.scrape", return_value=[job("700", 70), job("500", 90)]):
+with mock.patch("job_hunter.job_search.scrape", return_value=[job("700", 70), job("500", 90)]):
     new, again, _ = job_search.run(home)
 test("Second run: no repeats, except high match", new == [] and [o.job_id for o in again] == ["500"])
 test("Bot keeps its own shown list", (home / "search-data" / "seen_jobs.json").exists())
-with mock.patch("job_search.scrape", return_value=[job("800", 70)]):
+with mock.patch("job_hunter.job_search.scrape", return_value=[job("800", 70)]):
     new, _, _ = job_search.run(home, mark=False)
-with mock.patch("job_search.scrape", return_value=[job("800", 70)]):
+with mock.patch("job_hunter.job_search.scrape", return_value=[job("800", 70)]):
     new2, _, _ = job_search.run(home)
 test("Quiet search doesn't hide jobs from /procurar", [o.job_id for o in new] == [o.job_id for o in new2] == ["800"])
 

@@ -5,7 +5,13 @@ data/
 .env
 *.tmp
 .venv/
-apply/profile.md
-apply/resume.pdf
-apply/*.pdf
-apply/memory.json
+.pytest_cache/
+apply_bot/apply/profile.md
+apply_bot/apply/resume.pdf
+apply_bot/apply/*.pdf
+apply_bot/apply/memory.json
+
+# Bots Manager (Swift) build outputs
+manager/.build/
+manager/.swiftpm/
+

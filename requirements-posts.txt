@@ -1,2 +1,2 @@
-# Mac only: LinkedIn post search drives a logged-in Chrome (linkedin_posts.py)
+# Mac only: LinkedIn post search drives a logged-in Chrome (job_hunter/linkedin_posts.py)
 playwright==1.63.0

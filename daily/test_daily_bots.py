@@ -12,10 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-import calendar_feed
-import interview_prep
-import morning_brief
-import notifier
+from daily import calendar_feed, interview_prep, morning_brief
+from shared import telegram
 
 PASS = "✓"
 FAIL = "✗"
@@ -219,10 +217,10 @@ with mock.patch.dict(os.environ, {"CALENDAR_ICS_URL": ""}), \
 test("A failed part does not stop the brief", "Bom dia" in brief and "💵 x" in brief and "weather: falhou" in brief,
      brief)
 
-with mock.patch.object(notifier.requests, "post") as post:
+with mock.patch.object(telegram.requests, "post") as post:
     post.return_value = mock.Mock(status_code=200, content=b"x", **{"json.return_value": {"ok": True, "result": {}}})
     with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "JOB", "TELEGRAM_CHAT_ID": "42"}):
-        notifier.send_message("hi", token="MORNING")
+        telegram.send_message("hi", token="MORNING")
     test("Sends with the other bot's token", "/botMORNING/" in post.call_args[0][0], post.call_args[0][0])
 
 

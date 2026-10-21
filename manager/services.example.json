@@ -1,0 +1,80 @@
+{
+  "services": [
+    {
+      "id": "applybot",
+      "name": "Apply bot",
+      "group": "Bots",
+      "kind": "launchd",
+      "label": "com.jobhunter.applybot",
+      "cwd": "~/code/bots",
+      "log": "~/.job-hunter/apply_bot.log",
+      "description": "Telegram → Claude Code: fills job applications"
+    },
+    {
+      "id": "posts",
+      "name": "LinkedIn posts",
+      "group": "Bots",
+      "kind": "launchd",
+      "label": "com.jobhunter.posts",
+      "cwd": "~/code/bots",
+      "log": "~/.job-hunter/posts_watcher.log"
+    },
+    {
+      "id": "morningbrief",
+      "name": "Morning brief",
+      "group": "Bots",
+      "kind": "launchd",
+      "label": "com.jobhunter.morningbrief",
+      "cwd": "~/code/bots",
+      "log": "~/.job-hunter/com.jobhunter.morningbrief.log"
+    },
+    {
+      "id": "interviewprep",
+      "name": "Interview prep",
+      "group": "Bots",
+      "kind": "launchd",
+      "label": "com.jobhunter.interviewprep",
+      "cwd": "~/code/bots",
+      "log": "~/.job-hunter/com.jobhunter.interviewprep.log"
+    },
+    {
+      "id": "whatsappweb",
+      "name": "WhatsApp Resumo",
+      "group": "Bots",
+      "kind": "launchd",
+      "label": "com.jobhunter.whatsappweb",
+      "url": "http://127.0.0.1:8765",
+      "cwd": "~/code/bots",
+      "log": "~/.job-hunter/whatsapp_web.log"
+    },
+    {
+      "id": "jobhunter-site",
+      "name": "Job Hunter (site)",
+      "group": "Bots",
+      "kind": "command",
+      "command": ".venv/bin/python -m uvicorn job_hunter.app:app --host 127.0.0.1 --port 8000",
+      "cwd": "~/code/bots",
+      "env": { "DATA_DIR": "data" },
+      "url": "http://127.0.0.1:8000"
+    },
+    {
+      "id": "my-web-app",
+      "name": "My web app",
+      "group": "My project",
+      "kind": "command",
+      "command": "npm run dev",
+      "cwd": "~/code/my-project",
+      "env": { "PATH": "~/.nvm/versions/node/v22.14.0/bin:$PATH" },
+      "url": "http://localhost:5173",
+      "description": "Node from nvm: put its bin folder in PATH"
+    },
+    {
+      "id": "my-broker",
+      "name": "Broker (Docker)",
+      "group": "My project",
+      "kind": "docker",
+      "compose_file": "infra/docker-compose.yml",
+      "cwd": "~/code/my-project"
+    }
+  ]
+}
