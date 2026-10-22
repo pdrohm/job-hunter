@@ -13,6 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from daily import calendar_feed, interview_prep, morning_brief
+
+os.environ.pop("MIKE_INBOX", None)  # never write test messages to the real Mike inbox
 from shared import telegram
 
 PASS = "✓"
@@ -70,6 +72,10 @@ tomorrow = calendar_feed.parse_events(text, day_start + timedelta(days=1), day_e
 test("Recurring event repeats next day", [e.title for e in tomorrow] == ["Daily standup"],
      str([e.title for e in tomorrow]))
 test("Occurrences have different keys", tomorrow[0].key != next(e for e in events if e.uid == "a").key)
+
+card = calendar_feed.as_json([meet])["eventos"][0]
+test("App JSON has the times with offset and the link",
+     card["inicio"] == meet.start.isoformat() and card["link"] == meet.url and card["diaTodo"] is False, str(card))
 
 with mock.patch.object(calendar_feed.requests, "get", side_effect=calendar_feed.requests.ConnectionError("x")):
     test("A failed calendar gives no events, no crash", calendar_feed.fetch_events(day_start, day_end, ["u"]) == [])
@@ -208,14 +214,72 @@ with mock.patch.dict(os.environ, {"GMAIL_ADDRESS": "a", "GMAIL_APP_PASSWORD": "b
     lines = morning_brief.email_part()
     test("Email lines decode and escape", "<b>João</b>: Oferta &lt;b&gt;" in lines[1], str(lines))
 
+with mock.patch.dict(os.environ, {"GMAIL_ADDRESS": "a@x", "GMAIL_APP_PASSWORD": "b",
+                                 "GMAIL_ADDRESS_2": "c@y", "GMAIL_APP_PASSWORD_2": "d",
+                                 "GMAIL_ADDRESS_3": "e@z"}), \
+        mock.patch.object(morning_brief.imaplib, "IMAP4_SSL", FakeIMAP):
+    lines = morning_brief.email_part()
+    heads = [l for l in lines if l.startswith("📧")]
+    test("Two Gmail accounts, each with its header", len(heads) == 2 and "a@x" in heads[0] and "c@y" in heads[1],
+         str(heads))
+    test("Account without password is skipped", "e@z" not in "".join(lines))
+
+ok_run = lambda out: mock.Mock(returncode=0, stdout=out, stderr="")
+with mock.patch.dict(os.environ, {"MORNING_PRS_CMD": "ssh mac-mike prs"}), \
+        mock.patch.object(morning_brief.subprocess, "run",
+                          return_value=ok_run("2 PR(s) esperando sua revisão:\n- a/b #1: Fix <x>\n- c/d #2: Y")) as run:
+    lines = morning_brief.prs_part()
+    test("PRs listed and escaped", lines[0].startswith("🔀") and "Fix &lt;x&gt;" in lines[1] and len(lines) == 3, str(lines))
+    test("PR command runs without a shell", run.call_args.args[0] == ["ssh", "mac-mike", "prs"])
+with mock.patch.dict(os.environ, {"MORNING_PRS_CMD": "ssh mac-mike prs"}), \
+        mock.patch.object(morning_brief.subprocess, "run", return_value=ok_run("Nenhum PR esperando sua revisão.")):
+    test("No PRs = no block", morning_brief.prs_part() == [])
+with mock.patch.dict(os.environ, {"MORNING_PRS_CMD": "ssh mac-mike prs"}), \
+        mock.patch.object(morning_brief.subprocess, "run", return_value=mock.Mock(returncode=255, stdout="", stderr="timeout")):
+    test("Mac away = one short line", "fora do ar" in morning_brief.prs_part()[1])
+with mock.patch.dict(os.environ, {}, clear=True):
+    test("PRs and reminders off without a command", morning_brief.prs_part() == [] and morning_brief.reminders_part(NOW) == [])
+
+ms = lambda dt: int(dt.timestamp() * 1000)
+jobs = {"jobs": [
+    {"name": "dentista", "displayName": "Dentista", "enabled": True, "schedule": {"kind": "at"},
+     "state": {"nextRunAtMs": ms(NOW + timedelta(hours=6))}},
+    {"name": "amanha", "enabled": True, "schedule": {"kind": "at"}, "state": {"nextRunAtMs": ms(NOW + timedelta(days=1, hours=2))}},
+    {"name": "heartbeat", "enabled": True, "schedule": {"kind": "every"}, "state": {"nextRunAtMs": ms(NOW + timedelta(hours=1))}},
+    {"name": "off", "enabled": False, "schedule": {"kind": "at"}, "state": {"nextRunAtMs": ms(NOW + timedelta(hours=2))}},
+]}
+with mock.patch.dict(os.environ, {"MORNING_REMINDERS_CMD": "openclaw automations list --json"}), \
+        mock.patch.object(morning_brief.subprocess, "run", return_value=ok_run(json.dumps(jobs))):
+    lines = morning_brief.reminders_part(NOW)
+    test("Only today's enabled one-shot reminders", lines == ["⏰ <b>Lembretes de hoje</b>", "• 14:00 Dentista"], str(lines))
+
 with mock.patch.dict(os.environ, {"CALENDAR_ICS_URL": ""}), \
         mock.patch.object(morning_brief, "weather_part", side_effect=RuntimeError("boom")), \
         mock.patch.object(morning_brief, "currency_part", return_value=["💵 x"]), \
         mock.patch.object(morning_brief, "email_part", return_value=[]), \
-        mock.patch.object(morning_brief, "jobs_part", return_value=[]):
+        mock.patch.object(morning_brief, "jobs_part", return_value=[]), \
+        mock.patch.object(morning_brief, "prs_part", return_value=[]), \
+        mock.patch.object(morning_brief, "reminders_part", return_value=[]):
     brief = morning_brief.build_brief(NOW)
 test("A failed part does not stop the brief", "Bom dia" in brief and "💵 x" in brief and "weather: falhou" in brief,
      brief)
+
+card = morning_brief.brief_card("☀️ <b>Bom dia!</b> quinta, 22 out", [
+    ("agenda", ["📅 <b>Agenda</b> (1)", '• 11:00–11:15  <a href="https://meet.google.com/x">Standup &amp; Grooming</a>']),
+    ("currency", ["⚠️ currency: falhou (HTTPError)"]),
+    ("email", ["📧 <b>Emails</b> (1) · a@x.com", "• <b>Itaú</b>: protocolo", "📧 <b>Emails</b> · b@y", "Nenhum email importante novo."])], NOW)
+test("Card: one section per title", [s["titulo"] for s in card["secoes"]] == ["Agenda", "currency", "Emails", "Emails"], str(card))
+test("Card: link and plain text", card["secoes"][0]["itens"][0] == {"texto": "11:00–11:15  Standup & Grooming",
+     "link": "https://meet.google.com/x", "falhou": False}, str(card["secoes"][0]))
+test("Card: failed part and account", card["secoes"][1]["itens"][0]["falhou"] and card["secoes"][2]["detalhe"] == "a@x.com")
+with mock.patch.dict(os.environ, {"MORNING_TODOS_CMD": "tarefa listar hoje"}), \
+        mock.patch.object(morning_brief.subprocess, "run", return_value=ok_run(
+            "Hoje:\n  ab12cd34 | Pagar o boleto | atrasada 2026-10-20\n  ef56ab78 | Ligar pro banco | 2026-10-22 09:30")):
+    lines = morning_brief.todos_part()
+test("To-dos: title, hour, late", lines == ["✅ <b>Para fazer hoje</b> (2)", "• Pagar o boleto  (atrasada)", "• 09:30  Ligar pro banco"], str(lines))
+with mock.patch.dict(os.environ, {"MORNING_TODOS_CMD": "tarefa listar hoje"}), \
+        mock.patch.object(morning_brief.subprocess, "run", return_value=ok_run("Hoje: nada")):
+    test("To-dos: none = no block", morning_brief.todos_part() == [])
 
 with mock.patch.object(telegram.requests, "post") as post:
     post.return_value = mock.Mock(status_code=200, content=b"x", **{"json.return_value": {"ok": True, "result": {}}})

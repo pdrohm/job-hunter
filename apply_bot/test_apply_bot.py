@@ -5,12 +5,15 @@ No network, no Chrome, no Claude: those are mocked.
 """
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
 
 from apply_bot import apply_bot
+
+os.environ.pop("MIKE_INBOX", None)  # never write test messages to the real Mike inbox
 from job_hunter import notifier
 from apply_bot.apply_bot import (AnswerMemory, ApplyBot, ClaudeResult, Config, _parse_intent, build_claude_cmd,
                        build_intent_cmd, extract_url, format_report, parse_report)
@@ -757,6 +760,22 @@ with mock.patch("apply_bot.apply_bot.ensure_chrome"), mock.patch("shared.telegra
     test("Post button without links asks for the link", "Não achei o link" in bot.said[-1][0])
 test("Fill prompt knows posts", "LinkedIn POST" in apply_bot.FILL_PROMPT)
 
+
+print("\n━━━ Mike Tests ━━━")
+
+with mock.patch("apply_bot.apply_bot.ensure_chrome"), \
+        mock.patch("shared.telegram.call") as tg_call, \
+        mock.patch("apply_bot.apply_bot.run_claude") as rc:
+    bot = SyncBot(cfg)
+    rc.return_value = fake_result("ready")
+    bot.handle_mike({"texto": "/candidatar https://jobs.ashbyhq.com/kraken/9"})
+    app = bot.app
+    test("Mike text starts an application", app is not None and app.url.endswith("/kraken/9"))
+    tg_call.reset_mock()
+    bot.handle_mike({"dado": f"cancel:{app.id}"})
+    test("Mike button cancels", bot.app is None)
+    test("Mike button does not answer a Telegram callback",
+         not any(c.args and c.args[0] == "answerCallbackQuery" for c in tg_call.call_args_list))
 
 # ─────────────────────────────────────────────
 print(f"\n{'━' * 50}")

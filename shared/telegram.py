@@ -10,6 +10,9 @@ Setup:
     5. Run `python -m shared.telegram --test` to check it works.
 
 Other bots pass their own token (`token=...`); the chat ID is the same.
+
+Every message also goes to the Mike inbox when MIKE_INBOX is set (shared/mike.py),
+and TELEGRAM_OFF=true stops the Telegram part.
 """
 
 import argparse
@@ -21,6 +24,8 @@ import time
 
 import requests
 from dotenv import load_dotenv
+
+from shared import mike
 
 log = logging.getLogger("telegram")
 
@@ -44,6 +49,9 @@ def _chat_id() -> str:
 
 
 def is_configured() -> bool:
+    """Somewhere to send to: Telegram, or only Mike once Telegram is off."""
+    if mike.telegram_off():
+        return True
     return bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
 
 
@@ -85,6 +93,9 @@ def call(method: str, payload: dict, retries: int = 3, files: dict = None, timeo
 def send_message(text: str, reply_markup: dict = None, token: str = None) -> dict:
     """Send an HTML-formatted message, split into chunks under Telegram's limit.
     Buttons (reply_markup) go on the last chunk. Returns the last message."""
+    mike.post(text, reply_markup)
+    if mike.telegram_off():
+        return {}
     chunks = split_message(text)
     message = {}
     for i, chunk in enumerate(chunks):
@@ -104,6 +115,9 @@ def send_message(text: str, reply_markup: dict = None, token: str = None) -> dic
 def send_file(path: str, caption: str = "", reply_markup: dict = None) -> dict:
     """Send an image as a photo (inline preview). Telegram rejects very tall
     photos (full-page screenshots), so fall back to sending it as a document."""
+    mike.post(caption or "(imagem)", reply_markup, file=str(path))
+    if mike.telegram_off():
+        return {}
     payload = {"chat_id": _chat_id(), "caption": caption[:1024], "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup

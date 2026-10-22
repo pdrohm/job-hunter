@@ -7,8 +7,10 @@ Put it in .env as CALENDAR_ICS_URL. Several calendars: separate with commas.
 The link gives read access to the calendar, so keep it only in .env.
 """
 
+import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Optional
@@ -104,3 +106,22 @@ def fetch_events(start: datetime, end: datetime, urls: Optional[list[str]] = Non
 def day_bounds(day: date) -> tuple[datetime, datetime]:
     start = datetime.combine(day, time.min).astimezone()
     return start, start + timedelta(days=1)
+
+
+def as_json(events: list[Event]) -> dict:
+    """For the Mike app's calendar: {"eventos": [...]}; times are ISO with the offset."""
+    return {"eventos": [{"id": e.key, "titulo": e.title, "inicio": e.start.isoformat(), "fim": e.end.isoformat(),
+                         "diaTodo": e.all_day, "local": e.location, "link": e.url} for e in events],
+            "erro": None if ics_urls() else "sem agenda configurada"}
+
+
+if __name__ == "__main__":
+    # python -m daily.calendar_feed --json 2026-10-01 2026-11-08  (both days included)
+    if len(sys.argv) != 4 or sys.argv[1] != "--json":
+        sys.exit("uso: python -m daily.calendar_feed --json AAAA-MM-DD AAAA-MM-DD")
+    from dotenv import load_dotenv
+    load_dotenv()  # CALENDAR_ICS_URL lives in .env, like for the brief
+    first, last = date.fromisoformat(sys.argv[2]), date.fromisoformat(sys.argv[3])
+    if last < first or (last - first).days > 62:
+        sys.exit("periodo invalido (max 62 dias)")
+    print(json.dumps(as_json(fetch_events(day_bounds(first)[0], day_bounds(last)[1])), ensure_ascii=False))

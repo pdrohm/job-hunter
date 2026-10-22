@@ -50,6 +50,12 @@ Kinds of service:
 CLI with the same logic: `manager/.build/release/bots-manager status | start <id> | stop <id> | restart <id> | log <id>`
 (`--config FILE` for another file). Tests: `cd manager && swift test`.
 
+**Chat with Claude** (the ✨ button): a window where you talk to Claude Code, like in the terminal.
+It runs `claude -p` with your Claude login (your subscription, no API key) in `~/.bots-manager/chat`,
+with the folders of all services added (`--add-dir`) and in auto permission mode. Each message
+resumes the same session; **Nova conversa** starts a new one. History: `~/.bots-manager/chat.json`.
+`CLAUDE_BIN` sets another `claude` program. From the shell: `bots-manager ask "<text>"`.
+
 ## Telegram alerts for new jobs
 
 1. On Telegram, talk to [@BotFather](https://t.me/BotFather), send `/newbot`, and copy the token.

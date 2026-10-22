@@ -52,7 +52,7 @@ import requests
 from dotenv import load_dotenv
 
 from job_hunter import notifier
-from shared import telegram
+from shared import mike, telegram
 
 log = logging.getLogger("apply_bot")
 
@@ -62,6 +62,7 @@ APPLY_DIR = BOT_DIR / "apply"  # profile.md, resume PDF, memory.json (git-ignore
 PLAYWRIGHT_MCP = "@playwright/mcp@0.0.82"
 CLAUDE_TIMEOUT_SECONDS = 15 * 60
 POLL_TIMEOUT_SECONDS = 50
+MIKE_POLL_SECONDS = 3  # how fast a request sent through Mike is picked up
 STEP_BUDGET_USD = "3"  # hard cap per fill/fix/submit step (claude --max-budget-usd)
 INTENT_BUDGET_USD = "0.10"
 INTENT_TIMEOUT_SECONDS = 90
@@ -893,10 +894,11 @@ class ApplyBot:
 
     def route_free_text(self, text: str):
         """Natural language → one bot action. Claude only classifies; it can't act."""
-        try:
-            telegram.call("sendChatAction", {"chat_id": self.cfg.chat_id, "action": "typing"})
-        except RuntimeError:
-            pass
+        if not mike.telegram_off():
+            try:
+                telegram.call("sendChatAction", {"chat_id": self.cfg.chat_id, "action": "typing"})
+            except RuntimeError:
+                pass
         intent = classify_intent(self.cfg, text, self.state_text())
         action = intent.get("action", "")
         app = self.app
@@ -942,10 +944,11 @@ class ApplyBot:
             self.say(HELP_TEXT)
 
     def handle_callback(self, cq: dict):
-        try:
-            telegram.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
-        except RuntimeError:
-            pass
+        if cq.get("id"):  # a button pressed through Mike has no Telegram id
+            try:
+                telegram.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
+            except RuntimeError:
+                pass
         data = cq.get("data", "")
         action, _, arg = data.partition(":")
 
@@ -1283,14 +1286,41 @@ class ApplyBot:
 
     # ── Main loop ─────────────────────────────
 
+    def handle_mike(self, request: dict):
+        """A message or a button press that Pedro sent through Mike (shared/mike.py).
+        It comes from a local folder only the bot user can write, so no chat check."""
+        try:
+            if request.get("dado"):
+                self.handle_callback({"id": "", "data": request["dado"], "message": {}})
+            elif request.get("texto"):
+                self.handle_text(str(request["texto"]).strip())
+        finally:
+            self.save_app()
+
+    def poll_mike(self):
+        for request in mike.take_requests("vagas"):
+            try:
+                self.handle_mike(request)
+            except Exception:
+                log.exception("Failed to handle a Mike request")
+
     def poll_forever(self):
         log.info("Apply bot running. Waiting for /candidatar ...")
         self.restore_app()
         while True:
+            self.poll_mike()
+            if mike.telegram_off():
+                try:
+                    self.tick_auto()
+                except Exception:
+                    log.exception("Auto-apply failed")
+                self.close_chrome_if_idle()
+                time.sleep(MIKE_POLL_SECONDS)
+                continue
             try:
                 data = telegram.call("getUpdates", {
                     "offset": self.offset,
-                    "timeout": POLL_TIMEOUT_SECONDS,
+                    "timeout": MIKE_POLL_SECONDS if mike.enabled() else POLL_TIMEOUT_SECONDS,
                     "allowed_updates": ["message", "callback_query"],
                 }, timeout=POLL_TIMEOUT_SECONDS + 15)
             except RuntimeError as e:
