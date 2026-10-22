@@ -22,6 +22,7 @@ Uso: bots-manager [--config ARQUIVO] <comando>
   stop <id|grupo>     para / pausa
   restart <id|grupo>  reinicia
   log <id>            últimas 200 linhas do log
+  ask <texto>         pergunta ao Claude Code (nova conversa, sem a janela)
 Config: \(configPath)
 """
 
@@ -83,6 +84,30 @@ case "log":
     if s.kind == .docker { print(ServiceController.dockerLogs(s)); break }
     guard let path = ServiceController.logPath(s) else { fail("sem log") }
     print(LogFile.tail(path) ?? "(log vazio: \(path))")
+case "ask":
+    let prompt = args.dropFirst().joined(separator: " ")
+    guard !prompt.isEmpty else { fail("falta o texto") }
+    let done = DispatchSemaphore(value: 0)
+    final class Flag: @unchecked Sendable { var ok = false }
+    let flag = Flag()
+    let dirs = Array(Set(services.compactMap(\.cwdPath))).sorted()
+    Task.detached {
+        let stream = ClaudeRun().start(prompt: prompt, session: nil, cwd: Paths.stateDir + "/chat", addDirs: dirs,
+                                       systemPrompt: "Keep replies short.")
+        for await e in stream {
+            switch e {
+            case .session: break
+            case .text(let t): print(t)
+            case .tool(let t): print("  · \(t)")
+            case .done(let success, let text):
+                if !success { print("erro: \(text)") }
+                flag.ok = success
+            }
+        }
+        done.signal()
+    }
+    done.wait()
+    exit(flag.ok ? 0 : 1)
 default:
     print(usage)
     exit(2)

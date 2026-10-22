@@ -169,3 +169,39 @@ import Testing
         #expect(t == "498\n499\n500")
     }
 }
+
+@Suite struct ClaudeStreamTests {
+    @Test func initGivesSession() {
+        let line = #"{"type":"system","subtype":"init","session_id":"abc","tools":[]}"#
+        #expect(ClaudeStream.parse(line) == [.session("abc")])
+    }
+
+    @Test func hookLinesAreIgnored() {
+        let line = #"{"type":"system","subtype":"hook_started","session_id":"abc"}"#
+        #expect(ClaudeStream.parse(line).isEmpty)
+        #expect(ClaudeStream.parse("not json").isEmpty)
+    }
+
+    @Test func assistantTextAndTools() {
+        let line = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":" Oi \n"},{"type":"tool_use","name":"Bash","input":{"command":"echo hi\nls"}},{"type":"tool_use","name":"Edit","input":{"file_path":"/a/b/app.py"}},{"type":"tool_use","name":"Mystery","input":{}}]}}"#
+        #expect(ClaudeStream.parse(line) == [.text("Oi"), .tool("$ echo hi"), .tool("Edit app.py"), .tool("Mystery")])
+    }
+
+    @Test func subagentMessagesAreHidden() {
+        let line = #"{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"content":[{"type":"text","text":"inner"}]}}"#
+        #expect(ClaudeStream.parse(line).isEmpty)
+    }
+
+    @Test func result() {
+        #expect(ClaudeStream.parse(#"{"type":"result","is_error":false,"result":"ok"}"#) == [.done(ok: true, text: "ok")])
+        #expect(ClaudeStream.parse(#"{"type":"result","is_error":true,"subtype":"error_max_turns"}"#)
+            == [.done(ok: false, text: "error_max_turns")])
+    }
+
+    @Test func resumeArgs() {
+        let a = ClaudeRun.arguments(prompt: "hi", session: "s1", addDirs: ["/x"], systemPrompt: "sys")
+        #expect(a.contains("--resume") && a.contains("s1"))
+        #expect(a.firstIndex(of: "--add-dir").map { a[$0 + 1] } == "/x")
+        #expect(!ClaudeRun.arguments(prompt: "hi", session: nil, addDirs: [], systemPrompt: "").contains("--resume"))
+    }
+}

@@ -24,6 +24,7 @@ struct RootView: View {
 
 struct ListView: View {
     @Bindable var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @State private var contentHeight: CGFloat = 200
 
     var body: some View {
@@ -65,6 +66,10 @@ struct ListView: View {
             Text(summary)
                 .font(.system(size: 11))
                 .foregroundStyle(model.failedCount > 0 ? Color.red : Color.secondary)
+            IconButton(icon: "sparkles", help: "Conversar com o Claude", enabled: true) {
+                openWindow(id: "chat")
+                NSApplication.shared.activate()
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
