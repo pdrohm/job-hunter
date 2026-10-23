@@ -121,6 +121,10 @@ def select_new(results: list[Opportunity], store: SeenStore, min_score: float) -
 def scrape(time_range: str = None, engines: list[str] = None, max_job_age_days: float = None) -> list[Opportunity]:
     """One search with the WATCH_* filters. The apply bot's /procurar uses it
     too, so both always look for the same kind of job."""
+    rules = regras.load()
+    max_job_age_days = max_job_age_days or float(_env("WATCH_MAX_JOB_AGE_DAYS", "7"))
+    if rules["idade_max_dias"]:  # the filter in the app: search only that far back
+        max_job_age_days = min(max_job_age_days, rules["idade_max_dias"])
     results = run_scraper_with_progress(
         max_results=200,
         time_range=time_range or _env("WATCH_TIME_RANGE", "24h"),
@@ -131,12 +135,12 @@ def scrape(time_range: str = None, engines: list[str] = None, max_job_age_days: 
         contract_only=_env_bool("WATCH_CONTRACT_ONLY", False),
         exclude_sponsorship=not _env_bool("WATCH_ALLOW_SPONSORSHIP", False),
         exclude_countries=_env_list("WATCH_EXCLUDE_COUNTRIES", ""),
-        max_job_age_days=max_job_age_days or float(_env("WATCH_MAX_JOB_AGE_DAYS", "7")),
+        max_job_age_days=max_job_age_days,
         region_only=not _env_bool("WATCH_ANY_REGION", False),
         top_markets_only=_env_bool("WATCH_TOP_MARKETS_ONLY", True),
     )
     results = results if _env_bool("WATCH_ALLOW_JUNIOR", False) else filter_junior(results)
-    return regras.apply(results)
+    return regras.apply(results, rules)
 
 
 def run_once(dry_run: bool = False, seed: bool = False) -> int:
